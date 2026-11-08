@@ -63,7 +63,7 @@ Phần backend đã được khởi tạo với Spring Boot và tập trung vào
 | Build | Maven Wrapper (`mvnw`) |
 | Payment lifecycle | `INITIATED → AUTHORIZED → CAPTURED → REFUNDED`, cancel/fail trước capture |
 | State machines | Transition matrix trong code + DB constraints + [docs/state-machines.md](docs/state-machines.md) |
-| Event delivery | Transactional outbox + retry scheduler + durable RabbitMQ queues |
+| Event delivery | Transactional outbox + publisher confirms + retry scheduler + durable RabbitMQ queues |
 | Database | PostgreSQL 17 + Flyway migration |
 | Cache | Redis 8 (đã có hạ tầng, sẽ dùng cho rate limit/idempotency cache ở bước sau) |
 | Message Queue | RabbitMQ 4 (topic exchange + durable queue) |
@@ -233,12 +233,15 @@ Các action lifecycle cũng idempotent theo trạng thái đích: gọi lại ac
   - `PENDING` → lỗi và còn lượt retry → `PENDING` với `next_attempt_at`
   - `PENDING` → hết lượt retry → `FAILED`
 - Sau commit, `OutboxImmediateDispatcher` thử publish ngay; `OutboxScheduler` retry các row `PENDING` còn lại.
+- Publisher confirms ở chế độ `correlated`: mỗi lần gửi có `CorrelationData` riêng, `OutboxPublisher` chờ broker ack (tối đa `app.outbox.confirm-timeout`, default `5s`) rồi mới chuyển row sang `PUBLISHED`.
+- Nack, confirm timeout, mất kết nối hoặc message bị broker trả lại (unroutable) đều ghi nhận một attempt thất bại: row giữ `PENDING`, tăng `attempts`, set `next_attempt_at`; scheduler retry tiếp, hết `OUTBOX_MAX_ATTEMPTS` mới thành `FAILED`.
+- `spring.rabbitmq.publisher-returns=true` + mandatory flag bật để message không route được sẽ quay về publisher thay vì bị drop im lặng.
 - RabbitMQ topology:
   - Exchange: `payment.events` (topic, durable)
   - `PaymentCreatedEvent` → queue `payment.created`, routing key `payment.created`
   - `PaymentStatusChangedEvent` → queue `payment.status-changed`, routing key `payment.status-changed`
 - `PaymentStatusChangedEvent` có `fromStatus`/`toStatus` để downstream cập nhật ledger, notification hoặc analytics.
-- `PUBLISHED` hiện có nghĩa message đã được gửi tới RabbitMQ connection; publisher confirms là lớp reliability tiếp theo.
+- `PUBLISHED` giờ có nghĩa broker đã ack message. Delivery vẫn là at-least-once: confirm về muộn sau khi timeout rồi retry có thể tạo bản trùng, nên consumer dedupe theo `messageId`/`eventId`. Header `outboxAttempts` cho biết đây là lần gửi thứ mấy.
 - Chi tiết state machine: [docs/state-machines.md](docs/state-machines.md).
 
 ## Security
@@ -291,6 +294,7 @@ Các biến môi trường chính (đều có default cho local):
 | `OUTBOX_MAX_ATTEMPTS` | `5` | Số lần thử publish tối đa trước khi row thành `FAILED` |
 | `OUTBOX_RETRY_DELAY` | `10s` | Delay giữa các lần retry |
 | `OUTBOX_POLL_INTERVAL_MS` | `5000` | Chu kỳ scheduler quét outbox |
+| `OUTBOX_CONFIRM_TIMEOUT` | `5s` | Thời gian tối đa chờ publisher confirm trước khi tính là publish lỗi |
 
 ## Test
 
@@ -316,6 +320,8 @@ Test hiện có:
 - Audit trail.
 - Validation và missing header.
 - 404 cho payment không tồn tại.
+- Publisher confirm: ack mới chuyển `PUBLISHED`; nack, timeout, mất kết nối và message unroutable đều fail.
+- Broker tắt (`rabbitmqctl stop_app`): row giữ `PENDING`, `attempts` tăng, `last_error` được ghi; broker bật lại thì scheduler publish thành công và message tới queue thật.
 
 ## Cấu trúc package
 
@@ -345,7 +351,7 @@ Dockerfile dùng multi-stage build (JDK 21 build stage, JRE 21 runtime), chạy 
 
 ## Roadmap backend
 
-1. Publisher confirms, DLQ và poison-message handling cho outbox/RabbitMQ.
+1. DLQ, poison-message handling và metrics cho publisher confirms (nack/timeout rate).
 2. Idempotency key TTL/cleanup và scope theo merchant.
 3. Partial refunds, multiple refunds và compensation flows.
 4. Redis cho rate limiting và cache idempotency.

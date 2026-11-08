@@ -115,8 +115,19 @@ FAILED  ──manual retry─────────> PENDING
   completed.
 - `OutboxScheduler` retries due `PENDING` rows every
   `app.outbox.poll-interval-ms` (default 5 seconds).
-- `OutboxPublisher` locks one row with `PESSIMISTIC_WRITE`, sends the stored
-  JSON payload, then moves the row to `PUBLISHED` or records a failure.
+- `OutboxPublisher` locks one row with `PESSIMISTIC_WRITE` and publishes the
+  stored JSON payload through `ConfirmedMessagePublisher`. The row only moves
+  to `PUBLISHED` after RabbitMQ confirms the message
+  (`spring.rabbitmq.publisher-confirm-type=correlated`).
+- The confirm wait is bounded by `app.outbox.confirm-timeout` (default 5
+  seconds). The row lock is held for that round trip, which is the price of
+  guaranteeing that two dispatchers cannot publish the same row.
+- A nack, a confirm timeout, a returned (unroutable) message and a connection
+  failure all record a failed attempt: `attempts + 1`, `last_error`,
+  `next_attempt_at`. The row stays `PENDING` until `max-attempts` is reached.
+- `spring.rabbitmq.publisher-returns=true` plus the mandatory flag make
+  unroutable messages come back to the publisher instead of being dropped
+  silently; they are treated as failed publishes.
 - Attempts and next retry time are persisted; exhausted events become
   `FAILED`.
 - Queues:
@@ -127,9 +138,11 @@ FAILED  ──manual retry─────────> PENDING
   Consumers should use `eventId`, `paymentId`, and eventually an aggregate
   version/sequence. Within the status-changed queue, order is preserved for a
   single consumer.
-- `PUBLISHED` currently means the message was handed to the RabbitMQ
-  connection. Publisher confirms are the next reliability layer; without them
-  a broker-side loss after the socket write is still possible.
+- `PUBLISHED` now means RabbitMQ acknowledged the message, not just that the
+  frame reached the socket. Delivery remains at-least-once: a confirm that
+  arrives after the timeout, followed by a retry, can produce a duplicate.
+  Consumers must dedupe on `messageId`/`eventId`; every message also carries an
+  `outboxAttempts` header.
 
 ## Audit projection
 
@@ -191,7 +204,9 @@ These are explicit in configuration or documentation, but not business state:
   table.
 - **Rabbit connection:** Spring AMQP owns connection/channel recovery. The
   outbox is the application-owned retry state; template retry was removed so
-  there is no second hidden retry machine.
+  there is no second hidden retry machine. The shared connection factory has
+  correlated publisher confirms and returns enabled, so a connection failure
+  surfaces as a failed publish attempt rather than a silent loss.
 - **Transaction phase:** `@Transactional` owns active/commit/rollback.
   Immediate outbox dispatch runs after commit in a new transaction and is
   allowed to fail safely; the scheduler is the recovery path.

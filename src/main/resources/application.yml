@@ -42,6 +42,13 @@ spring:
     username: ${RABBITMQ_USERNAME:payment}
     password: ${RABBITMQ_PASSWORD:payment}
     connection-timeout: 5s
+    # Broker acknowledgements per message: the outbox only marks a row
+    # PUBLISHED after this confirm arrives.
+    publisher-confirm-type: correlated
+    # Unroutable messages must come back to us instead of being dropped.
+    publisher-returns: true
+    template:
+      mandatory: true
 
   mvc:
     problemdetails:
@@ -97,6 +104,7 @@ app:
     max-attempts: ${OUTBOX_MAX_ATTEMPTS:5}
     retry-delay: ${OUTBOX_RETRY_DELAY:10s}
     poll-interval-ms: ${OUTBOX_POLL_INTERVAL_MS:5000}
+    confirm-timeout: ${OUTBOX_CONFIRM_TIMEOUT:5s}
 
 springdoc:
   api-docs:
