@@ -1,0 +1,16 @@
+# Activate with SPRING_PROFILES_ACTIVE=jwt and provide OAUTH2_ISSUER_URI.
+spring:
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${OAUTH2_ISSUER_URI}
+
+app:
+  security:
+    mode: JWT
+
+management:
+  endpoint:
+    health:
+      show-details: when-authorized

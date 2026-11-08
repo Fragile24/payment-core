@@ -1,0 +1,113 @@
+spring:
+  application:
+    name: payment-core
+
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/payment_core}
+    username: ${DB_USERNAME:payment}
+    password: ${DB_PASSWORD:payment}
+    hikari:
+      maximum-pool-size: ${DB_POOL_SIZE:10}
+      minimum-idle: 2
+      connection-timeout: 5000
+
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      timeout: 2s
+      repositories:
+        enabled: false
+    web:
+      pageable:
+        default-page-size: 20
+        max-page-size: 100
+
+  rabbitmq:
+    host: ${RABBITMQ_HOST:localhost}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USERNAME:payment}
+    password: ${RABBITMQ_PASSWORD:payment}
+    connection-timeout: 5s
+
+  mvc:
+    problemdetails:
+      enabled: true
+
+  docker:
+    compose:
+      lifecycle-management: start-only
+      readiness:
+        wait: only-if-started
+
+  lifecycle:
+    timeout-per-shutdown-phase: 20s
+
+server:
+  port: ${SERVER_PORT:8080}
+  shutdown: graceful
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: always
+      probes:
+        enabled: true
+  info:
+    env:
+      enabled: true
+  metrics:
+    tags:
+      application: ${spring.application.name}
+
+info:
+  app:
+    name: Payment Core
+    description: Payment sandbox backend
+    version: @project.version@
+
+app:
+  security:
+    mode: ${SECURITY_MODE:OPEN}
+  messaging:
+    exchange: payment.events
+    created-queue: payment.created
+    created-routing-key: payment.created
+    status-changed-queue: payment.status-changed
+    status-changed-routing-key: payment.status-changed
+  outbox:
+    enabled: ${OUTBOX_ENABLED:true}
+    max-attempts: ${OUTBOX_MAX_ATTEMPTS:5}
+    retry-delay: ${OUTBOX_RETRY_DELAY:10s}
+    poll-interval-ms: ${OUTBOX_POLL_INTERVAL_MS:5000}
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    operations-sorter: method
+    tags-sorter: alpha
+  show-actuator: false
+
+logging:
+  level:
+    com.paymentcore: INFO
+    org.springframework.amqp: WARN
