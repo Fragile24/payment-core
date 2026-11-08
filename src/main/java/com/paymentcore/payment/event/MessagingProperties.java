@@ -6,7 +6,7 @@ import org.springframework.validation.annotation.Validated;
 
 @Validated
 @ConfigurationProperties(prefix = "app.messaging")
-public record MessagingProperties(@NotBlank String exchange, @NotBlank String createdQueue,
-		@NotBlank String createdRoutingKey, @NotBlank String statusChangedQueue,
+public record MessagingProperties(@NotBlank String exchange, @NotBlank String deadLetterExchange,
+		@NotBlank String createdQueue, @NotBlank String createdRoutingKey, @NotBlank String statusChangedQueue,
 		@NotBlank String statusChangedRoutingKey) {
 }

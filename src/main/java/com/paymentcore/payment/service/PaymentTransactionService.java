@@ -1,6 +1,6 @@
 package com.paymentcore.payment.service;
 
-import com.paymentcore.payment.api.dto.PaymentResponse;
+import com.paymentcore.payment.dto.PaymentResponse;
 import com.paymentcore.payment.domain.IdempotencyRecord;
 import com.paymentcore.payment.domain.Payment;
 import com.paymentcore.payment.domain.PaymentAction;

@@ -10,5 +10,5 @@ import java.time.Duration;
 @Validated
 @ConfigurationProperties(prefix = "app.outbox")
 public record OutboxProperties(boolean enabled, @Min(1) int maxAttempts, @NotNull Duration retryDelay,
-		@Min(100) long pollIntervalMs, @NotNull Duration confirmTimeout) {
+		@Min(100) long pollIntervalMs, @NotNull Duration confirmTimeout, @Min(0) long failedHealthThreshold) {
 }

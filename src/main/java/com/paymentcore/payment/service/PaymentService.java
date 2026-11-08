@@ -1,9 +1,9 @@
 package com.paymentcore.payment.service;
 
-import com.paymentcore.payment.api.dto.CreatePaymentRequest;
-import com.paymentcore.payment.api.dto.PaymentAuditResponse;
-import com.paymentcore.payment.api.dto.PaymentResponse;
 import com.paymentcore.payment.domain.PaymentAction;
+import com.paymentcore.payment.dto.CreatePaymentRequest;
+import com.paymentcore.payment.dto.PaymentAuditResponse;
+import com.paymentcore.payment.dto.PaymentResponse;
 import com.paymentcore.payment.repository.PaymentAuditLogRepository;
 import com.paymentcore.payment.repository.PaymentRepository;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -39,12 +39,14 @@ public class PaymentService {
 	private final PaymentTransactionService transactionService;
 	private final PaymentRepository payments;
 	private final PaymentAuditLogRepository auditLogs;
+	private final PaymentMetrics metrics;
 
 	public PaymentService(PaymentTransactionService transactionService, PaymentRepository payments,
-			PaymentAuditLogRepository auditLogs) {
+			PaymentAuditLogRepository auditLogs, PaymentMetrics metrics) {
 		this.transactionService = transactionService;
 		this.payments = payments;
 		this.auditLogs = auditLogs;
+		this.metrics = metrics;
 	}
 
 	/**
@@ -61,7 +63,9 @@ public class PaymentService {
 
 		for (int attempt = 1; attempt <= MAX_CREATE_ATTEMPTS; attempt++) {
 			try {
-				return transactionService.createOrReplay(key, normalized);
+				PaymentCreationResult result = transactionService.createOrReplay(key, normalized);
+				metrics.recordCreated(result.outcome());
+				return result;
 			}
 			catch (DataIntegrityViolationException ex) {
 				if (attempt == MAX_CREATE_ATTEMPTS) {
@@ -73,23 +77,29 @@ public class PaymentService {
 	}
 
 	public PaymentTransitionResult authorize(UUID paymentId) {
-		return transactionService.transition(paymentId, PaymentAction.AUTHORIZE);
+		return transition(paymentId, PaymentAction.AUTHORIZE);
 	}
 
 	public PaymentTransitionResult capture(UUID paymentId) {
-		return transactionService.transition(paymentId, PaymentAction.CAPTURE);
+		return transition(paymentId, PaymentAction.CAPTURE);
 	}
 
 	public PaymentTransitionResult refund(UUID paymentId) {
-		return transactionService.transition(paymentId, PaymentAction.REFUND);
+		return transition(paymentId, PaymentAction.REFUND);
 	}
 
 	public PaymentTransitionResult cancel(UUID paymentId) {
-		return transactionService.transition(paymentId, PaymentAction.CANCEL);
+		return transition(paymentId, PaymentAction.CANCEL);
 	}
 
 	public PaymentTransitionResult fail(UUID paymentId) {
-		return transactionService.transition(paymentId, PaymentAction.FAIL);
+		return transition(paymentId, PaymentAction.FAIL);
+	}
+
+	private PaymentTransitionResult transition(UUID paymentId, PaymentAction action) {
+		PaymentTransitionResult result = transactionService.transition(paymentId, action);
+		metrics.recordTransition(action, result.outcome());
+		return result;
 	}
 
 	@Transactional(readOnly = true)

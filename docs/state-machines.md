@@ -133,6 +133,10 @@ FAILED  ──manual retry─────────> PENDING
 - Queues:
   - `payment.created` / routing key `payment.created`
   - `payment.status-changed` / routing key `payment.status-changed`
+- Dead letters: both queues declare `x-dead-letter-exchange=payment.events.dlx`
+  with their own name as routing key, and each `<queue>.dlq` is bound to that
+  exchange. The outbox covers publisher failures; dead-lettering covers consumer
+  failures, which the outbox cannot observe.
 - Cross-queue ordering is not guaranteed. A status-changed consumer can see
   `AUTHORIZED` before a separate consumer has processed `PAYMENT_CREATED`.
   Consumers should use `eventId`, `paymentId`, and eventually an aggregate

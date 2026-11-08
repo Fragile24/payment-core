@@ -84,25 +84,25 @@ public class ConfirmedMessagePublisher {
 			confirm = correlationData.getFuture().get(confirmTimeout.toMillis(), TimeUnit.MILLISECONDS);
 		}
 		catch (TimeoutException ex) {
-			throw new OutboxPublishException(
+			throw new OutboxPublishException(OutboxPublishException.Reason.TIMEOUT,
 					"publisher confirm timeout after %s outboxId=%s".formatted(confirmTimeout, event.getId()), ex);
 		}
 		catch (InterruptedException ex) {
 			Thread.currentThread().interrupt();
-			throw new OutboxPublishException(
+			throw new OutboxPublishException(OutboxPublishException.Reason.INTERRUPTED,
 					"interrupted while waiting for publisher confirm outboxId=" + event.getId(), ex);
 		}
 		catch (ExecutionException ex) {
-			throw new OutboxPublishException(
+			throw new OutboxPublishException(OutboxPublishException.Reason.CONFIRM_FAILED,
 					"publisher confirm failed outboxId=" + event.getId(), ex.getCause());
 		}
 		if (!confirm.ack()) {
-			throw new OutboxPublishException("broker nacked message outboxId=%s reason=%s"
-				.formatted(event.getId(), confirm.reason()));
+			throw new OutboxPublishException(OutboxPublishException.Reason.NACK,
+					"broker nacked message outboxId=%s reason=%s".formatted(event.getId(), confirm.reason()));
 		}
 		ReturnedMessage returned = correlationData.getReturned();
 		if (returned != null) {
-			throw new OutboxPublishException(
+			throw new OutboxPublishException(OutboxPublishException.Reason.RETURNED,
 					"message returned as unroutable outboxId=%s exchange=%s routingKey=%s replyCode=%d replyText=%s"
 						.formatted(event.getId(), returned.getExchange(), returned.getRoutingKey(),
 								returned.getReplyCode(), returned.getReplyText()));

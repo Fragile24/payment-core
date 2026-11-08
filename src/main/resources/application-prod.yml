@@ -1,0 +1,51 @@
+# Production profile.
+#
+# Pointers for the reader:
+# - Security is JWT by default and SecurityModePolicy refuses to start if
+#   SECURITY_MODE=OPEN is combined with this profile.
+# - Logs are emitted as ECS JSON on stdout; the platform ships them to the log
+#   pipeline. Locally the human-readable pattern from application.yml is used.
+# - Health details are hidden from unauthenticated callers; probes still work.
+# - Swagger is disabled: the OpenAPI document belongs to the build/review
+#   process, not to the production edge.
+spring:
+  jpa:
+    properties:
+      hibernate:
+        generate_statistics: false
+  flyway:
+    clean-disabled: true
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          # Required in prod: the application refuses to start without an issuer.
+          issuer-uri: ${OAUTH2_ISSUER_URI}
+
+server:
+  # Honour X-Forwarded-* from the ingress so Location headers are correct.
+  forward-headers-strategy: framework
+
+logging:
+  structured:
+    format:
+      console: ecs
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      show-details: never
+
+springdoc:
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false
+
+app:
+  security:
+    mode: ${SECURITY_MODE:JWT}

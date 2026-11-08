@@ -95,6 +95,7 @@ app:
     mode: ${SECURITY_MODE:OPEN}
   messaging:
     exchange: payment.events
+    dead-letter-exchange: payment.events.dlx
     created-queue: payment.created
     created-routing-key: payment.created
     status-changed-queue: payment.status-changed
@@ -105,6 +106,7 @@ app:
     retry-delay: ${OUTBOX_RETRY_DELAY:10s}
     poll-interval-ms: ${OUTBOX_POLL_INTERVAL_MS:5000}
     confirm-timeout: ${OUTBOX_CONFIRM_TIMEOUT:5s}
+    failed-health-threshold: ${OUTBOX_FAILED_HEALTH_THRESHOLD:100}
 
 springdoc:
   api-docs:
@@ -119,3 +121,5 @@ logging:
   level:
     com.paymentcore: INFO
     org.springframework.amqp: WARN
+  pattern:
+    console: "%d{yyyy-MM-dd'T'HH:mm:ss.SSSXXX} %5p [%X{requestId:-}] [%t] %logger{36} - %m%n"

@@ -1,9 +1,9 @@
 package com.paymentcore.payment.api;
 
 import com.paymentcore.common.api.PageResponse;
-import com.paymentcore.payment.api.dto.CreatePaymentRequest;
-import com.paymentcore.payment.api.dto.PaymentAuditResponse;
-import com.paymentcore.payment.api.dto.PaymentResponse;
+import com.paymentcore.payment.dto.CreatePaymentRequest;
+import com.paymentcore.payment.dto.PaymentAuditResponse;
+import com.paymentcore.payment.dto.PaymentResponse;
 import com.paymentcore.payment.service.PaymentCreationOutcome;
 import com.paymentcore.payment.service.PaymentCreationResult;
 import com.paymentcore.payment.service.PaymentService;

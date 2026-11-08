@@ -4,6 +4,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.env.Environment;
+import org.springframework.core.env.Profiles;
 import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
@@ -19,7 +21,8 @@ public class SecurityConfiguration {
 
 	private final SecurityProperties properties;
 
-	public SecurityConfiguration(SecurityProperties properties) {
+	public SecurityConfiguration(SecurityProperties properties, Environment environment) {
+		SecurityModePolicy.validate(properties.mode(), environment.acceptsProfiles(Profiles.of("prod")));
 		this.properties = properties;
 	}
 
@@ -28,8 +31,10 @@ public class SecurityConfiguration {
 		http.csrf(AbstractHttpConfigurer::disable)
 			.sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
 			.authorizeHttpRequests(requests -> {
-				requests.requestMatchers("/actuator/health", "/actuator/health/**", "/actuator/info", "/error",
-						"/swagger-ui.html", "/swagger-ui/**", "/v3/api-docs/**")
+				requests
+					.requestMatchers("/actuator/health", "/actuator/health/**", "/actuator/info",
+							"/actuator/prometheus", "/error", "/swagger-ui.html", "/swagger-ui/**",
+							"/v3/api-docs/**")
 					.permitAll();
 				switch (properties.mode()) {
 					case JWT -> requests.anyRequest().authenticated();

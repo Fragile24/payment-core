@@ -1,5 +1,6 @@
 package com.paymentcore.payment.outbox;
 
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -22,15 +23,19 @@ class OutboxPublisherTest {
 
 	private ConfirmedMessagePublisher messagePublisher;
 
+	private SimpleMeterRegistry meterRegistry;
+
 	private OutboxPublisher publisher;
 
 	@BeforeEach
 	void setUp() {
 		this.outboxEvents = mock(OutboxEventRepository.class);
 		this.messagePublisher = mock(ConfirmedMessagePublisher.class);
+		this.meterRegistry = new SimpleMeterRegistry();
 		OutboxProperties properties = new OutboxProperties(true, 3, Duration.ofSeconds(10), 5000,
-				Duration.ofSeconds(2));
-		this.publisher = new OutboxPublisher(this.outboxEvents, this.messagePublisher, properties);
+				Duration.ofSeconds(2), 100);
+		this.publisher = new OutboxPublisher(this.outboxEvents, this.messagePublisher, properties,
+				new OutboxPublishMetrics(this.meterRegistry));
 	}
 
 	@Test
@@ -44,14 +49,15 @@ class OutboxPublisherTest {
 		assertThat(event.getStatus()).isEqualTo(OutboxStatus.PUBLISHED);
 		assertThat(event.getPublishedAt()).isNotNull();
 		assertThat(event.getAttempts()).isZero();
+		assertThat(meterRegistry.get("outbox.publish").tag("result", "confirmed").counter().count()).isEqualTo(1);
 	}
 
 	@Test
 	void recordsFailureAndSchedulesRetryWhenBrokerDoesNotConfirm() {
 		OutboxEvent event = pendingEvent();
 		when(outboxEvents.findByIdForUpdate(event.getId())).thenReturn(Optional.of(event));
-		doThrow(new OutboxPublishException("publisher confirm timeout after 2s outboxId=" + event.getId()))
-			.when(messagePublisher)
+		doThrow(new OutboxPublishException(OutboxPublishException.Reason.TIMEOUT,
+				"publisher confirm timeout after 2s outboxId=" + event.getId())).when(messagePublisher)
 			.publish(event);
 
 		publisher.publish(event.getId());
@@ -61,13 +67,35 @@ class OutboxPublisherTest {
 		assertThat(event.getLastError()).contains("confirm timeout");
 		assertThat(event.getNextAttemptAt()).isAfter(Instant.now());
 		assertThat(event.getPublishedAt()).isNull();
+		assertThat(meterRegistry.get("outbox.publish")
+			.tag("result", "failed")
+			.tag("reason", "timeout")
+			.counter()
+			.count()).isEqualTo(1);
+	}
+
+	@Test
+	void reportsConnectionFailuresWithTheirOwnReason() {
+		OutboxEvent event = pendingEvent();
+		when(outboxEvents.findByIdForUpdate(event.getId())).thenReturn(Optional.of(event));
+		doThrow(new org.springframework.amqp.AmqpConnectException(new java.net.ConnectException("refused")))
+			.when(messagePublisher)
+			.publish(event);
+
+		publisher.publish(event.getId());
+
+		assertThat(meterRegistry.get("outbox.publish")
+			.tag("result", "failed")
+			.tag("reason", "connection")
+			.counter()
+			.count()).isEqualTo(1);
 	}
 
 	@Test
 	void givesUpAfterMaxAttempts() {
 		OutboxEvent event = pendingEvent();
 		when(outboxEvents.findByIdForUpdate(event.getId())).thenReturn(Optional.of(event));
-		doThrow(new OutboxPublishException("broker nacked message"))
+		doThrow(new OutboxPublishException(OutboxPublishException.Reason.NACK, "broker nacked message"))
 			.when(messagePublisher)
 			.publish(event);
 

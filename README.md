@@ -63,13 +63,14 @@ Phần backend đã được khởi tạo với Spring Boot và tập trung vào
 | Build | Maven Wrapper (`mvnw`) |
 | Payment lifecycle | `INITIATED → AUTHORIZED → CAPTURED → REFUNDED`, cancel/fail trước capture |
 | State machines | Transition matrix trong code + DB constraints + [docs/state-machines.md](docs/state-machines.md) |
-| Event delivery | Transactional outbox + publisher confirms + retry scheduler + durable RabbitMQ queues |
+| Event delivery | Transactional outbox + publisher confirms + retry scheduler + DLQ + durable RabbitMQ queues |
 | Database | PostgreSQL 17 + Flyway migration |
 | Cache | Redis 8 (đã có hạ tầng, sẽ dùng cho rate limit/idempotency cache ở bước sau) |
-| Message Queue | RabbitMQ 4 (topic exchange + durable queue) |
-| Security | Spring Security, OAuth2 Resource Server (JWT), tắt auth cho local |
+| Message Queue | RabbitMQ 4 (topic exchange + durable queue + dead-letter exchange) |
+| Security | Spring Security, OAuth2 Resource Server (JWT), fail-fast nếu `OPEN` ở profile `prod` |
 | API Docs | Swagger UI / OpenAPI 3 |
-| Monitoring | Spring Boot Actuator + Prometheus endpoint |
+| Monitoring | Actuator + Micrometer (`payment.*`, `outbox.*`) + outbox health + log JSON (prod) |
+| Quality gates | Maven Enforcer, JaCoCo coverage gate, ArchUnit architecture tests, GitHub Actions |
 | Container | Docker Compose cho hạ tầng, Dockerfile multi-stage cho ứng dụng |
 
 ## Yêu cầu môi trường
@@ -274,6 +275,8 @@ $env:SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_ISSUER_URI = "https://your-identi
 
 Khi bật, gửi `Authorization: Bearer <token>` cho các API payment; Swagger UI có nút Authorize. Health, Swagger và OpenAPI vẫn public.
 
+Profile `prod` từ chối khởi động nếu `SECURITY_MODE=OPEN` (`SecurityModePolicy`), mặc định dùng JWT và tắt Swagger. Chi tiết: [docs/production-readiness.md](docs/production-readiness.md).
+
 ## Cấu hình
 
 Các biến môi trường chính (đều có default cho local):
@@ -286,23 +289,25 @@ Các biến môi trường chính (đều có default cho local):
 | `REDIS_HOST` / `REDIS_PORT` | `localhost` / `6379` | Redis |
 | `RABBITMQ_HOST` / `RABBITMQ_PORT` | `localhost` / `5672` | RabbitMQ |
 | `RABBITMQ_USERNAME` / `RABBITMQ_PASSWORD` | `payment` / `payment` | RabbitMQ credentials |
-| `SECURITY_MODE` | `OPEN` | `OPEN` hoặc `JWT` |
-| `SPRING_PROFILES_ACTIVE` | chưa đặt | Đặt `jwt` để bật cấu hình OAuth2 Resource Server |
-| `OAUTH2_ISSUER_URI` | chưa đặt | OIDC issuer khi dùng profile `jwt` |
+| `SECURITY_MODE` | `OPEN` | `OPEN` hoặc `JWT`; profile `prod` từ chối `OPEN` |
+| `SPRING_PROFILES_ACTIVE` | chưa đặt | `local` (log chi tiết), `jwt` (OAuth2 Resource Server), `prod` (hardening) |
+| `OAUTH2_ISSUER_URI` | chưa đặt | OIDC issuer khi dùng profile `jwt`/`prod` |
 | `SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_ISSUER_URI` | chưa đặt | Cách cấu hình issuer chuẩn của Spring Boot |
 | `OUTBOX_ENABLED` | `true` | Bật outbox retry scheduler |
 | `OUTBOX_MAX_ATTEMPTS` | `5` | Số lần thử publish tối đa trước khi row thành `FAILED` |
 | `OUTBOX_RETRY_DELAY` | `10s` | Delay giữa các lần retry |
 | `OUTBOX_POLL_INTERVAL_MS` | `5000` | Chu kỳ scheduler quét outbox |
 | `OUTBOX_CONFIRM_TIMEOUT` | `5s` | Thời gian tối đa chờ publisher confirm trước khi tính là publish lỗi |
+| `OUTBOX_FAILED_HEALTH_THRESHOLD` | `100` | Số row `FAILED` tối đa trước khi outbox health báo `DOWN` |
 
 ## Test
 
 ```powershell
-.\mvnw.cmd test
+.\mvnw.cmd test      # unit + integration tests
+.\mvnw.cmd verify    # thêm JaCoCo coverage gate (>= 80% line) và đóng gói
 ```
 
-Integration test dùng Testcontainers để khởi động PostgreSQL, RabbitMQ và Redis thật. Yêu cầu Docker đang chạy; các image được pin version trong `TestcontainersConfiguration`.
+Integration test dùng Testcontainers để khởi động PostgreSQL, RabbitMQ và Redis thật. Yêu cầu Docker đang chạy; các image được pin version trong `TestcontainersConfiguration`. CI (`.github/workflows/ci.yml`) chạy `verify` trên mỗi push/PR.
 
 Test hiện có:
 
@@ -322,24 +327,31 @@ Test hiện có:
 - 404 cho payment không tồn tại.
 - Publisher confirm: ack mới chuyển `PUBLISHED`; nack, timeout, mất kết nối và message unroutable đều fail.
 - Broker tắt (`rabbitmqctl stop_app`): row giữ `PENDING`, `attempts` tăng, `last_error` được ghi; broker bật lại thì scheduler publish thành công và message tới queue thật.
+- Request id: `X-Request-Id` được echo lại, xuất hiện trong log MDC và `requestId` của Problem Details; id do client gửi phải đúng format.
+- DLQ topology: queue chính có `x-dead-letter-exchange`/routing key, DLQ bind đúng exchange.
+- Outbox health: `UP` khi còn row chờ retry, `DOWN` khi số row `FAILED` vượt ngưỡng.
+- Metrics: counter/tag của `payment.created`, `payment.transition`, `outbox.publish`.
+- Kiến trúc: ArchUnit bắt domain phụ thuộc service, controller chạm repository, package cycle, field injection và naming lệch chuẩn.
 
 ## Cấu trúc package
 
 ```text
 src/main/java/com/paymentcore
 ├── common
-│   ├── api          # Problem Details, pagination response
-│   └── config       # Security, OpenAPI
+│   ├── api              # Problem Details, pagination response
+│   ├── config           # Security (mode + fail-fast policy), OpenAPI
+│   └── observability    # Request id filter (MDC + response header)
 └── payment
-    ├── api          # REST controller + DTO
-    ├── domain       # Payment, PaymentAction, PaymentStateMachine, idempotency record, audit entity
-    ├── event        # Created/status-changed event payloads, RabbitMQ topology
-    ├── outbox       # Outbox entity/status machine/publisher/retry scheduler
-    ├── repository   # Spring Data JPA repositories
-    └── service      # Idempotency snapshot, transaction boundary, transitions, audit
+    ├── api              # REST controller
+    ├── dto              # Request/response contract (API + idempotency snapshot)
+    ├── domain           # Payment, PaymentAction, PaymentStateMachine, idempotency record, audit entity
+    ├── event            # Created/status-changed event payloads, RabbitMQ topology + DLQ
+    ├── outbox           # Outbox entity/status machine/publisher/retry scheduler/metrics/health
+    ├── repository       # Spring Data JPA repositories
+    └── service          # Idempotency snapshot, transaction boundary, transitions, metrics facade
 ```
 
-Flyway migration nằm tại `src/main/resources/db/migration`.
+Flyway migration nằm tại `src/main/resources/db/migration`; test kiến trúc nằm ở `src/test/java/com/paymentcore/architecture`.
 
 ## Docker image
 
@@ -349,14 +361,43 @@ docker build -t payment-core:local .
 
 Dockerfile dùng multi-stage build (JDK 21 build stage, JRE 21 runtime), chạy bằng non-root user và có healthcheck gọi `/actuator/health`.
 
+## Production readiness (học gì ở đây)
+
+Phần refactor này không thêm endpoint mới. Nó bổ sung những thứ một payment service cần trước khi lên production, kèm lý do và cách kiểm chứng:
+
+- Checklist đầy đủ (reliability, observability, security, config, data, build, ops): [docs/production-readiness.md](docs/production-readiness.md)
+- Playbook sự cố (outbox backlog, broker down, DLQ, migration fail): [docs/runbook.md](docs/runbook.md)
+- Quyết định kiến trúc outbox + publisher confirms: [docs/adr/0001-outbox-publisher-confirms.md](docs/adr/0001-outbox-publisher-confirms.md)
+
+| Nhóm | Đã bổ sung | Kiểm chứng bằng |
+| --- | --- | --- |
+| Reliability | Outbox giữ row lock khi publish, `PUBLISHED` chỉ sau broker ack, retry có backoff, DLQ cho consumer | `OutboxBrokerFailureIntegrationTest`, `ConfirmedMessagePublisherTest`, `PaymentMessagingConfigurationTest` |
+| Observability | `X-Request-Id` + MDC, `requestId` trong Problem Details, metrics `payment.*`/`outbox.*`, outbox health contributor, log JSON (ECS) ở prod | `RequestIdFilterTest`, `RequestIdIntegrationTest`, `PaymentMetricsTest`, `OutboxHealthIndicatorTest` |
+| Security | Fail-fast khi `OPEN` + profile `prod`, giới hạn actuator surface, Swagger tắt ở prod | `SecurityModePolicyTest` |
+| Config | Profile `local`/`prod`, constructor-bound + `@Validated` properties, `.env.example` | startup validation |
+| Data | Migration V4 thêm index cho retention/forensics, DB constraints vẫn là chốt cuối | `PaymentApiIntegrationTest` (Flyway chạy thật) |
+| Build/CI | Enforcer (JDK/Maven), JaCoCo coverage gate, ArchUnit, GitHub Actions `verify` | `ArchitectureTest`, `./mvnw verify` |
+
+Chạy profile:
+
+```powershell
+# Local, log chi tiết
+.\mvnw.cmd spring-boot:run -Dspring-boot.run.profiles=local
+
+# Production-like: JWT bắt buộc, log JSON, không Swagger
+$env:SPRING_PROFILES_ACTIVE = "prod,jwt"
+$env:OAUTH2_ISSUER_URI = "https://issuer.example.com/realms/payments"
+.\mvnw.cmd spring-boot:run
+```
+
 ## Roadmap backend
 
-1. DLQ, poison-message handling và metrics cho publisher confirms (nack/timeout rate).
-2. Idempotency key TTL/cleanup và scope theo merchant.
+1. Consumer service + retry/poison policy, quorum queues và outbox replay endpoint cho row `FAILED`.
+2. Idempotency key retention/cleanup job và scope theo merchant.
 3. Partial refunds, multiple refunds và compensation flows.
 4. Redis cho rate limiting và cache idempotency.
 5. JWT/OIDC thật, role-based access và merchant ownership.
 6. Reconciliation job và báo cáo giao dịch lệch.
-7. Observability: Grafana dashboards, tracing (OpenTelemetry), alert rules, outbox metrics.
-8. CI/CD: Jenkinsfile/GitLab CI, build image, deploy Azure.
+7. Observability nâng cao: OpenTelemetry tracing, Grafana dashboards, alert rules.
+8. CI/CD: build image + scan (Trivy/SBOM), deploy Azure, Jenkinsfile/GitLab CI.
 9. AI Payment Assistant với guardrails và giới hạn quyền truy cập dữ liệu.

@@ -25,4 +25,6 @@ public interface OutboxEventRepository extends JpaRepository<OutboxEvent, UUID> 
 			""")
 	List<UUID> findDueIds(@Param("status") OutboxStatus status, @Param("now") Instant now, Pageable pageable);
 
+	long countByStatus(OutboxStatus status);
+
 }

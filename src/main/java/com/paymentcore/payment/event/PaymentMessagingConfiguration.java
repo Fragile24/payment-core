@@ -14,10 +14,14 @@ import org.springframework.context.annotation.Configuration;
 /**
  * Durable RabbitMQ topology for payment events.
  *
- * <p>This iteration publishes lifecycle events directly after commit. The next
- * reliability step is the transactional outbox pattern, which removes the
- * remaining chance of losing an event if the broker is unavailable right after
- * the database commit.</p>
+ * <p>The main queues are bound to a dead-letter exchange so a consumer that
+ * rejects a message (poison payload, repeated processing failure) does not
+ * silently lose it. The naming convention is fixed here:
+ * {@code <queue>.dlq}, dead-lettered with the original queue name as routing
+ * key, which makes the {@code rabbitmqctl list_queues} output easy to read.</p>
+ *
+ * <p>The publisher side already retries through the outbox; the DLQ covers the
+ * consumer side, which the outbox cannot see.</p>
  */
 @Configuration
 public class PaymentMessagingConfiguration {
@@ -28,14 +32,41 @@ public class PaymentMessagingConfiguration {
 	}
 
 	@Bean
-	Declarables paymentTopology(MessagingProperties properties, TopicExchange paymentEventsExchange) {
-		Queue createdQueue = QueueBuilder.durable(properties.createdQueue()).build();
-		Queue statusChangedQueue = QueueBuilder.durable(properties.statusChangedQueue()).build();
-		return new Declarables(createdQueue, statusChangedQueue,
+	TopicExchange paymentDeadLetterExchange(MessagingProperties properties) {
+		return ExchangeBuilder.topicExchange(properties.deadLetterExchange()).durable(true).build();
+	}
+
+	@Bean
+	Declarables paymentTopology(MessagingProperties properties, TopicExchange paymentEventsExchange,
+			TopicExchange paymentDeadLetterExchange) {
+		Queue createdQueue = deadLetteringQueue(properties.createdQueue(), properties.deadLetterExchange());
+		Queue statusChangedQueue = deadLetteringQueue(properties.statusChangedQueue(),
+				properties.deadLetterExchange());
+		Queue createdDeadLetterQueue = deadLetterQueue(properties.createdQueue());
+		Queue statusChangedDeadLetterQueue = deadLetterQueue(properties.statusChangedQueue());
+
+		return new Declarables(createdQueue, statusChangedQueue, createdDeadLetterQueue, statusChangedDeadLetterQueue,
 				BindingBuilder.bind(createdQueue).to(paymentEventsExchange).with(properties.createdRoutingKey()),
 				BindingBuilder.bind(statusChangedQueue)
 					.to(paymentEventsExchange)
-					.with(properties.statusChangedRoutingKey()));
+					.with(properties.statusChangedRoutingKey()),
+				BindingBuilder.bind(createdDeadLetterQueue)
+					.to(paymentDeadLetterExchange)
+					.with(createdDeadLetterQueue.getName()),
+				BindingBuilder.bind(statusChangedDeadLetterQueue)
+					.to(paymentDeadLetterExchange)
+					.with(statusChangedDeadLetterQueue.getName()));
+	}
+
+	private static Queue deadLetteringQueue(String name, String deadLetterExchange) {
+		return QueueBuilder.durable(name)
+			.deadLetterExchange(deadLetterExchange)
+			.deadLetterRoutingKey(name)
+			.build();
+	}
+
+	private static Queue deadLetterQueue(String sourceQueue) {
+		return QueueBuilder.durable(sourceQueue + ".dlq").build();
 	}
 
 	@Bean

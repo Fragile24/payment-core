@@ -1,4 +1,4 @@
-package com.paymentcore.payment.api.dto;
+package com.paymentcore.payment.dto;
 
 import com.paymentcore.payment.domain.Payment;
 import com.paymentcore.payment.domain.PaymentStatus;

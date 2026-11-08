@@ -38,7 +38,7 @@ class ConfirmedMessagePublisherTest {
 		this.sentCorrelation = new AtomicReference<>();
 		// Short confirm timeout so the timeout case stays fast.
 		OutboxProperties properties = new OutboxProperties(true, 3, Duration.ofSeconds(10), 5000,
-				Duration.ofMillis(150));
+				Duration.ofMillis(150), 100);
 		this.publisher = new ConfirmedMessagePublisher(this.rabbitTemplate, properties);
 	}
 
@@ -64,9 +64,10 @@ class ConfirmedMessagePublisherTest {
 			.complete(new CorrelationData.Confirm(false, "disk full")));
 
 		assertThatThrownBy(() -> publisher.publish(pendingEvent()))
-			.isInstanceOf(OutboxPublishException.class)
-			.hasMessageContaining("nacked")
-			.hasMessageContaining("disk full");
+			.isInstanceOfSatisfying(OutboxPublishException.class, (ex) -> {
+				assertThat(ex.getReason()).isEqualTo(OutboxPublishException.Reason.NACK);
+				assertThat(ex).hasMessageContaining("nacked").hasMessageContaining("disk full");
+			});
 	}
 
 	@Test
@@ -76,8 +77,10 @@ class ConfirmedMessagePublisherTest {
 		});
 
 		assertThatThrownBy(() -> publisher.publish(pendingEvent()))
-			.isInstanceOf(OutboxPublishException.class)
-			.hasMessageContaining("confirm timeout");
+			.isInstanceOfSatisfying(OutboxPublishException.class, (ex) -> {
+				assertThat(ex.getReason()).isEqualTo(OutboxPublishException.Reason.TIMEOUT);
+				assertThat(ex).hasMessageContaining("confirm timeout");
+			});
 	}
 
 	@Test
@@ -89,9 +92,10 @@ class ConfirmedMessagePublisherTest {
 		});
 
 		assertThatThrownBy(() -> publisher.publish(pendingEvent()))
-			.isInstanceOf(OutboxPublishException.class)
-			.hasMessageContaining("unroutable")
-			.hasMessageContaining("312");
+			.isInstanceOfSatisfying(OutboxPublishException.class, (ex) -> {
+				assertThat(ex.getReason()).isEqualTo(OutboxPublishException.Reason.RETURNED);
+				assertThat(ex).hasMessageContaining("unroutable").hasMessageContaining("312");
+			});
 	}
 
 	@Test

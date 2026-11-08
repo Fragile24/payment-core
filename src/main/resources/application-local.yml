@@ -1,0 +1,6 @@
+# Local developer profile: verbose application logs, framework noise kept down.
+# Activate with: ./mvnw spring-boot:run -Dspring-boot.run.profiles=local
+logging:
+  level:
+    com.paymentcore: DEBUG
+    org.springframework.amqp: INFO

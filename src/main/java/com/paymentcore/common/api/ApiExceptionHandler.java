@@ -1,10 +1,12 @@
 package com.paymentcore.common.api;
 
+import com.paymentcore.common.observability.RequestIdFilter;
 import com.paymentcore.payment.domain.PaymentStateException;
 import com.paymentcore.payment.service.IdempotencyKeyConflictException;
 import com.paymentcore.payment.service.InvalidPaymentRequestException;
 import com.paymentcore.payment.service.PaymentNotFoundException;
 import jakarta.servlet.http.HttpServletRequest;
+import org.slf4j.MDC;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.dao.OptimisticLockingFailureException;
@@ -118,6 +120,10 @@ public class ApiExceptionHandler {
 		problem.setInstance(URI.create(request.getRequestURI()));
 		problem.setProperty("code", code);
 		problem.setProperty("timestamp", Instant.now());
+		String requestId = MDC.get(RequestIdFilter.MDC_KEY);
+		if (requestId != null) {
+			problem.setProperty("requestId", requestId);
+		}
 		return problem;
 	}
 
