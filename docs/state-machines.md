@@ -12,11 +12,13 @@ infrastructure states owned by Spring, Flyway, Docker, or RabbitMQ.
 | Idempotency | `IdempotencyRecord`, `PaymentCreationOutcome` | `idempotency_keys` | Application + PostgreSQL |
 | API mutation outcome | `PaymentCreationOutcome`, `PaymentTransitionOutcome` | Response headers/status | Application |
 | Event delivery | `OutboxEvent`, `OutboxStatus`, `OutboxStateMachine` | `outbox_events` | Application + PostgreSQL + RabbitMQ |
+| Projection read model | `ProjectionOutcome`, `payment_projection`, `processed_events` | `payment_projection`, `processed_events` | Application + RabbitMQ + PostgreSQL |
+| Reconciliation | `ReconciliationOutcome`, findings/runs | `reconciliation_runs`, `reconciliation_findings`, `scheduled_job_lock` | Application + PostgreSQL |
 | Audit projection | `PaymentAuditLog`, `PaymentAuditEventType` | `payment_audit_logs` | Application + PostgreSQL |
 | Concurrency/version | `@Version`, `findByIdForUpdate` | `payments.version`, row locks | Application + PostgreSQL |
 | Security mode | `SecurityMode` | Configuration | Application |
 | Runtime/container | Spring Boot + Docker Compose configuration | Docker engine | Spring Boot / Docker |
-| Schema migration | Flyway migrations V1–V3 | `flyway_schema_history` | Flyway |
+| Schema migration | Flyway migrations V1–V6 | `flyway_schema_history` | Flyway |
 | Rabbit connection | Spring AMQP connection factory | Broker/connection | Spring AMQP |
 | Transaction phase | `@Transactional`, `@TransactionalEventListener` | Database transaction | Spring |
 
@@ -133,20 +135,49 @@ FAILED  ──manual retry─────────> PENDING
 - Queues:
   - `payment.created` / routing key `payment.created`
   - `payment.status-changed` / routing key `payment.status-changed`
-- Dead letters: both queues declare `x-dead-letter-exchange=payment.events.dlx`
-  with their own name as routing key, and each `<queue>.dlq` is bound to that
-  exchange. The outbox covers publisher failures; dead-lettering covers consumer
-  failures, which the outbox cannot observe.
-- Cross-queue ordering is not guaranteed. A status-changed consumer can see
-  `AUTHORIZED` before a separate consumer has processed `PAYMENT_CREATED`.
-  Consumers should use `eventId`, `paymentId`, and eventually an aggregate
-  version/sequence. Within the status-changed queue, order is preserved for a
-  single consumer.
+  - `payment.projection` / bound to both routing keys (consumer group queue)
+- Dead letters: each queue declares `x-dead-letter-exchange=payment.events.dlx`
+  with its own name as routing key, and each `<queue>.dlq` is bound to that
+  exchange with the source queue name as routing key. The outbox covers
+  publisher failures; dead-lettering covers consumer failures, which the outbox
+  cannot observe.
+- Cross-queue ordering is not guaranteed, and even within one queue a
+  redelivery can arrive after a newer event. Events carry `paymentVersion`
+  (aggregate version) so consumers apply only newer state instead of relying on
+  arrival order.
 - `PUBLISHED` now means RabbitMQ acknowledged the message, not just that the
   frame reached the socket. Delivery remains at-least-once: a confirm that
   arrives after the timeout, followed by a retry, can produce a duplicate.
   Consumers must dedupe on `messageId`/`eventId`; every message also carries an
   `outboxAttempts` header.
+
+## Projection consumer and reconciliation
+
+The first consumer builds `payment_projection` (see
+[ADR 0002](adr/0002-projection-consumer-and-reconciliation.md)).
+
+```text
+payment.projection queue
+    │  delivery id = message id
+    ▼
+processed_events (event_id, consumer)  ── conflict ──> DUPLICATE, ignored
+    │ new
+    ▼
+payment_projection upsert  WHERE version < event.paymentVersion
+    │
+    ▼
+commit both in one transaction
+```
+
+- `eventId` is the domain event id; `messageId` is the stable delivery id used
+  for deduplication across redeliveries.
+- Retry policy: 3 attempts with exponential backoff, then reject without requeue
+  → `payment.projection.dlq`.
+- Reconciliation compares `payments` with `payment_projection` on a schedule
+  behind a database lease. It repairs only missing/stale projections, from
+  `payments`, and records every run and finding in `reconciliation_runs` /
+  `reconciliation_findings`. Orphan projections and outbox failures are
+  reported, never auto-deleted.
 
 ## Audit projection
 
@@ -205,7 +236,12 @@ These are explicit in configuration or documentation, but not business state:
   started by the app. Shutdown is graceful with a 20-second phase timeout.
 - **Schema migration:** Flyway is forward-only. V3 moves idempotency columns
   into `idempotency_keys`, adds lifecycle constraints, and creates the outbox
-  table.
+  table. V4 adds operational indexes, V5 creates the projection read model and
+  delivery-idempotency tables, V6 creates the reconciliation tables and job
+  lease.
+- **Scheduling:** `@Scheduled` owns the outbox retry tick and the reconciliation
+  tick. The reconciliation lease lives in PostgreSQL, not in the JVM, so two
+  replicas cannot sweep at the same time.
 - **Rabbit connection:** Spring AMQP owns connection/channel recovery. The
   outbox is the application-owned retry state; template retry was removed so
   there is no second hidden retry machine. The shared connection factory has

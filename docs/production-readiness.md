@@ -50,6 +50,44 @@ transactional outbox solves the dual-write problem; publisher confirms solve the
 - `ConfirmedMessagePublisherTest` covers ack, nack, timeout, returned and
   connection-failure outcomes.
 
+### 1.1 Read model and reconciliation
+
+Publishing an event is only half of an event-driven flow; something must consume
+it, and consumption drifts. This iteration adds the first consumer and the safety
+net behind it. Design rationale: [ADR 0002](adr/0002-projection-consumer-and-reconciliation.md).
+
+| Concern | Implementation | Why it matters |
+| --- | --- | --- |
+| Consumer isolation | consumer group owns `payment.projection`, bound to both routing keys | Publisher topology stays unchanged; adding consumers is a broker change, not a code change in the payment service |
+| Duplicate delivery | `processed_events (event_id, consumer)` with `ON CONFLICT DO NOTHING` in the same transaction as the projection write | Broker redelivery, retries and consumer restarts are expected; "exactly once" is not available end-to-end |
+| Out-of-order delivery | each event carries `paymentVersion`; upsert has `WHERE version < new.version` | A stale delivery can never move the read model backwards |
+| Poison messages | 3 attempts with exponential backoff, then reject without requeue → `payment.projection.dlq` | One malformed payload must not block the queue |
+| Drift detection | scheduled sweep compares `payments` with `payment_projection`, counts orphans and reports the outbox backlog | The consumer can lose a committed event (crash between ack and commit); only reconciliation can see that |
+| Safe repair | missing/stale projections are rebuilt from `payments`, never by mutating the source or republishing | Repair is idempotent, and the source of truth stays untouched |
+| One sweep at a time | lease row in `scheduled_job_lock` with `UPDATE ... WHERE locked_until < now()` | Two instances firing the same schedule would double-report and double-repair |
+| Audit | `reconciliation_runs` + `reconciliation_findings` | "It ran at 03:00 and repaired 4 rows" is evidence, not a log line |
+
+At-least-once + idempotent consumer + version guard + periodic reconciliation is
+the honest combination; exactly-once would require a distributed transaction
+between RabbitMQ and PostgreSQL.
+
+**Verify**
+
+- `LedgerConsumerIntegrationTest`: end-to-end projection through outbox and
+  broker, duplicate delivery ignored, older event ignored, poison message lands
+  in the DLQ.
+- `ReconciliationIntegrationTest`: missing and stale projections repaired,
+  orphan/failed findings recorded, a second sweep is idempotent, and a held lease
+  skips the run.
+
+**Trade-offs**
+
+- The read model is eventually consistent; a read right after a write may be
+  stale. That is the cost of decoupling.
+- Reconciliation is a bounded full-scan comparison (`batch-size`). Very large
+  tables need an incremental/watermark strategy or a read replica — documented
+  as a follow-up, not hidden.
+
 ---
 
 ## 2. Observability
@@ -90,6 +128,11 @@ and status — enough to reconstruct a delivery incident without leaking data.
 | `payment.transition` | counter | `action`, `outcome=APPLIED\|REPLAYED` | Lifecycle health |
 | `outbox.publish` | counter | `result=confirmed\|failed`, `reason` | Delivery failure ratio |
 | `outbox.publish.duration` | timer | `result`, `reason` | Broker latency vs `confirm-timeout` |
+| `payment.projection.events` | counter | `eventType`, `outcome=processed\|duplicate\|failed` | Consumer health; a rising `failed` means DLQ pressure |
+| `reconciliation.runs` | counter | `result=completed\|failed\|skipped` | Did the safety net actually run? |
+| `reconciliation.findings` | counter | `type` | Drift that a human must look at (orphan, stuck outbox) |
+| `reconciliation.repaired` | counter | — | How much the sweep had to fix |
+| `reconciliation.duration` | timer | `result` | Sweep cost as data grows |
 | JVM/HTTP (`http.server.requests`, Hikari, RabbitMQ) | boot-provided | framework tags | Baseline SLOs |
 
 **Cardinality rule:** tags are enums only. A tag with payment id, merchant
@@ -208,14 +251,17 @@ entry. If it does not, the alert is noise.
 
 1. Idempotency key retention/cleanup job.
 2. Outbox replay endpoint for `FAILED` rows (today: controlled SQL, see runbook).
-3. Consumers and their retry policy (DLQ exists; nothing consumes yet).
+3. Split the projection consumer into its own deployable when its load diverges
+   from the payment API.
 4. Quorum queues instead of classic durable queues for stronger broker-side
    durability.
 5. OpenTelemetry tracing across HTTP → DB → RabbitMQ.
 6. Rate limiting backed by Redis (`payment.*` endpoints).
 7. Contract tests for downstream event schemas.
-8. Load test with confirm latency under broker pressure.
+8. Load test with confirm latency and consumer lag under broker pressure.
 9. Secrets management, TLS, WAF, and Prometheus network isolation at the edge.
+10. Incremental reconciliation (watermark on `payments.updated_at`) for large
+    tables.
 
 Each of these is an independent, testable increment — which is the point of a
 production-ready baseline: you add capabilities without redesigning the core.

@@ -93,8 +93,8 @@ Rows are kept for inspection; nothing retries them automatically.
 
 ## Playbook 5 — Dead-letter queue has messages
 
-Queues: `payment.created.dlq`, `payment.status-changed.dlq` on exchange
-`payment.events.dlx`.
+Queues: `payment.created.dlq`, `payment.status-changed.dlq`, `payment.projection.dlq`
+on exchange `payment.events.dlx`.
 
 1. Inspect without consuming:
    ```bash
@@ -138,12 +138,65 @@ Alternatively, use a broker-side **policy** (`rabbitmqctl set_policy`) for
 arguments RabbitMQ allows policies to change; DLX/DLQ routing is not one of
 them. Record whichever path you take in the change ticket.
 
+## Playbook 8 — Projection drift / reconciliation findings
+
+**Signals:** `reconciliation.findings{type=...}` above zero, new
+`reconciliation_findings` rows, consumer lag on `payment.projection`.
+
+1. Read the last runs:
+   ```sql
+   SELECT id, started_at, status, payments_checked, mismatches, repaired,
+          orphan_projections, outbox_pending, outbox_stuck, outbox_failed
+   FROM reconciliation_runs
+   ORDER BY started_at DESC
+   LIMIT 5;
+   ```
+2. Break down the findings of a run:
+   ```sql
+   SELECT type, count(*) FROM reconciliation_findings
+   WHERE run_id = '<run-id>' GROUP BY type;
+   ```
+3. Interpret:
+   - `MISSING_PROJECTION` / `STALE_PROJECTION` — already repaired from the
+     source. If they reappear on every run, the consumer is losing events:
+     check `payment.projection.events{outcome="failed"}`, `payment.projection`
+     queue depth and the DLQ.
+   - `ORPHAN_PROJECTION` — projection without a payment. Do **not** delete it
+     blindly: it can be an intentionally archived payment, a rolled-back
+     transaction, or a consumer bug. Compare with `payments` history before
+     acting.
+   - `OUTBOX_PENDING_STUCK` — publisher/broker problem; playbooks 1 and 2.
+   - `OUTBOX_FAILED` — playbook 4.
+4. Consumer lag:
+   ```bash
+   rabbitmqctl list_queues name messages consumers
+   ```
+   A growing `payment.projection` depth with active consumers means slow
+   processing; zero consumers means the listener did not start (check startup
+   logs for `payment.projection`).
+5. If runs are `SKIPPED` forever, inspect the lease:
+   ```sql
+   SELECT job_name, locked_until, locked_by FROM scheduled_job_lock;
+   ```
+   The lease self-heals after `app.reconciliation.lock-ttl`; only reset it
+   manually after confirming the previous owner is gone and the clock is sane:
+   ```sql
+   UPDATE scheduled_job_lock SET locked_until = now()
+   WHERE job_name = 'payment-reconciliation';
+   ```
+6. There is no admin endpoint to force a run yet; a restart triggers the
+   configured initial delay. Use the records above rather than improvising
+   repairs.
+
 ## Escalation
 
 | Condition | Owner | Action |
 | --- | --- | --- |
 | Outbox `pending` > 1h of traffic, or confirmed rate = 0 | Platform on-call | Broker/network playbook |
 | `FAILED` rows and no matching deploy | Payments engineer | Inspect payloads, fix consumer/topology |
+| Any DLQ depth > 0 | Consumer owner | Playbook 5 before purging |
+| `reconciliation.runs{result="failed"}` or no completed run for 2 intervals | Payments engineer | Read run `error`, check DB/broker availability |
+| Projection drift keeps reappearing after repair | Payments engineer | Consumer lag + DLQ, then playback |
 | 5xx > 1% for 5 minutes or `payment.created` error rate rising | Service owner | Roll back if a release is adjacent |
 | Suspected data exposure in logs | Security | Rotate, purge, postmortem |
 

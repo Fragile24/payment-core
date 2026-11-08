@@ -27,4 +27,6 @@ public interface OutboxEventRepository extends JpaRepository<OutboxEvent, UUID> 
 
 	long countByStatus(OutboxStatus status);
 
+	long countByStatusAndCreatedAtBefore(OutboxStatus status, Instant createdAt);
+
 }

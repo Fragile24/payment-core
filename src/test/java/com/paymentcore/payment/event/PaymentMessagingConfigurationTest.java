@@ -18,21 +18,37 @@ class PaymentMessagingConfigurationTest {
 	private final PaymentMessagingConfiguration configuration = new PaymentMessagingConfiguration();
 
 	private final MessagingProperties properties = new MessagingProperties("payment.events", "payment.events.dlx",
-			"payment.created", "payment.created", "payment.status-changed", "payment.status-changed");
+			"payment.created", "payment.created", "payment.status-changed", "payment.status-changed",
+			"payment.projection");
 
 	@Test
 	void mainQueuesDeadLetterToTheDeadLetterExchange() {
 		Declarables declarables = topology();
 
-		Queue created = queue(declarables, "payment.created");
-		Queue statusChanged = queue(declarables, "payment.status-changed");
-
-		assertThat(created.getArguments())
+		assertThat(queue(declarables, "payment.created").getArguments())
 			.containsEntry("x-dead-letter-exchange", "payment.events.dlx")
 			.containsEntry("x-dead-letter-routing-key", "payment.created");
-		assertThat(statusChanged.getArguments())
+		assertThat(queue(declarables, "payment.status-changed").getArguments())
 			.containsEntry("x-dead-letter-exchange", "payment.events.dlx")
 			.containsEntry("x-dead-letter-routing-key", "payment.status-changed");
+		assertThat(queue(declarables, "payment.projection").getArguments())
+			.containsEntry("x-dead-letter-exchange", "payment.events.dlx")
+			.containsEntry("x-dead-letter-routing-key", "payment.projection");
+	}
+
+	@Test
+	void projectionQueueReceivesBothEventTypes() {
+		Declarables declarables = topology();
+
+		List<Binding> bindings = declarables.getDeclarablesByType(Binding.class)
+			.stream()
+			.filter((binding) -> "payment.projection".equals(binding.getDestination()))
+			.toList();
+
+		assertThat(bindings).hasSize(2);
+		assertThat(bindings.stream().map(Binding::getRoutingKey))
+			.containsExactlyInAnyOrder("payment.created", "payment.status-changed");
+		assertThat(bindings).allSatisfy((binding) -> assertThat(binding.getExchange()).isEqualTo("payment.events"));
 	}
 
 	@Test
@@ -41,16 +57,18 @@ class PaymentMessagingConfigurationTest {
 
 		assertThat(queue(declarables, "payment.created.dlq")).isNotNull();
 		assertThat(queue(declarables, "payment.status-changed.dlq")).isNotNull();
+		assertThat(queue(declarables, "payment.projection.dlq")).isNotNull();
 
 		List<Binding> deadLetterBindings = declarables.getDeclarablesByType(Binding.class)
 			.stream()
 			.filter((binding) -> binding.getExchange().equals("payment.events.dlx"))
 			.toList();
 
-		assertThat(deadLetterBindings).hasSize(2);
+		assertThat(deadLetterBindings).hasSize(3);
 		assertThat(deadLetterBindings.stream()
 			.map(Binding::getRoutingKey)
-			.collect(Collectors.toSet())).containsExactlyInAnyOrder("payment.created.dlq", "payment.status-changed.dlq");
+			.collect(Collectors.toSet())).containsExactlyInAnyOrder("payment.created", "payment.status-changed",
+					"payment.projection");
 	}
 
 	@Test

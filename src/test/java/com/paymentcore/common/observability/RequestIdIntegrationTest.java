@@ -23,7 +23,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * id is attached to error payloads, and a client cannot smuggle log lines into
  * the log stream through the header.
  */
-@SpringBootTest
+@SpringBootTest(properties = "app.reconciliation.enabled=false")
 @AutoConfigureMockMvc
 @Import(TestcontainersConfiguration.class)
 class RequestIdIntegrationTest {

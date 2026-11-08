@@ -100,6 +100,7 @@ app:
     created-routing-key: payment.created
     status-changed-queue: payment.status-changed
     status-changed-routing-key: payment.status-changed
+    projection-queue: payment.projection
   outbox:
     enabled: ${OUTBOX_ENABLED:true}
     max-attempts: ${OUTBOX_MAX_ATTEMPTS:5}
@@ -107,6 +108,15 @@ app:
     poll-interval-ms: ${OUTBOX_POLL_INTERVAL_MS:5000}
     confirm-timeout: ${OUTBOX_CONFIRM_TIMEOUT:5s}
     failed-health-threshold: ${OUTBOX_FAILED_HEALTH_THRESHOLD:100}
+  ledger:
+    consumer-enabled: ${LEDGER_CONSUMER_ENABLED:true}
+  reconciliation:
+    enabled: ${RECONCILIATION_ENABLED:true}
+    interval-ms: ${RECONCILIATION_INTERVAL_MS:300000}
+    initial-delay-ms: ${RECONCILIATION_INITIAL_DELAY_MS:30000}
+    batch-size: ${RECONCILIATION_BATCH_SIZE:500}
+    outbox-stuck-after: ${RECONCILIATION_OUTBOX_STUCK_AFTER:10m}
+    lock-ttl: ${RECONCILIATION_LOCK_TTL:10m}
 
 springdoc:
   api-docs:

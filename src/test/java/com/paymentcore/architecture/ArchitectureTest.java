@@ -62,6 +62,20 @@ class ArchitectureTest {
 		.beFreeOfCycles();
 
 	@ArchTest
+	static final ArchRule ledgerDoesNotDependOnReconciliation = noClasses().that()
+		.resideInAPackage("com.paymentcore.ledger..")
+		.should()
+		.dependOnClassesThat()
+		.resideInAPackage("com.paymentcore.reconciliation..");
+
+	@ArchTest
+	static final ArchRule reconciliationDoesNotDependOnWeb = noClasses().that()
+		.resideInAPackage("com.paymentcore.reconciliation..")
+		.should()
+		.dependOnClassesThat()
+		.resideInAnyPackage("com.paymentcore.payment.api..", "com.paymentcore.common.observability..");
+
+	@ArchTest
 	static final ArchRule controllersAreNamedAsControllers = classes().that()
 		.areAnnotatedWith(RestController.class)
 		.should()

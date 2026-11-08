@@ -36,7 +36,7 @@ import static org.assertj.core.api.Assertions.fail;
  * explicitly instead of racing the background poll.</p>
  */
 @SpringBootTest(properties = { "app.outbox.poll-interval-ms=3600000", "app.outbox.retry-delay=1s",
-		"app.outbox.confirm-timeout=2s" })
+		"app.outbox.confirm-timeout=2s", "app.reconciliation.enabled=false" })
 @Import(TestcontainersConfiguration.class)
 class OutboxBrokerFailureIntegrationTest {
 

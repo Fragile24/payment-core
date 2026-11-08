@@ -14,6 +14,12 @@ import org.springframework.context.annotation.Configuration;
 /**
  * Durable RabbitMQ topology for payment events.
  *
+ * <p>Every consumer group owns a queue. The publisher only knows the exchange
+ * and routing keys; adding or removing a consumer never changes publisher code.
+ * {@code payment.projection} is the queue of the in-house projection consumer
+ * and receives both event types. The other two queues remain available for
+ * other consumers (ledger, notifications, analytics).</p>
+ *
  * <p>The main queues are bound to a dead-letter exchange so a consumer that
  * rejects a message (poison payload, repeated processing failure) does not
  * silently lose it. The naming convention is fixed here:
@@ -42,20 +48,32 @@ public class PaymentMessagingConfiguration {
 		Queue createdQueue = deadLetteringQueue(properties.createdQueue(), properties.deadLetterExchange());
 		Queue statusChangedQueue = deadLetteringQueue(properties.statusChangedQueue(),
 				properties.deadLetterExchange());
+		Queue projectionQueue = deadLetteringQueue(properties.projectionQueue(), properties.deadLetterExchange());
 		Queue createdDeadLetterQueue = deadLetterQueue(properties.createdQueue());
 		Queue statusChangedDeadLetterQueue = deadLetterQueue(properties.statusChangedQueue());
+		Queue projectionDeadLetterQueue = deadLetterQueue(properties.projectionQueue());
 
-		return new Declarables(createdQueue, statusChangedQueue, createdDeadLetterQueue, statusChangedDeadLetterQueue,
+		return new Declarables(createdQueue, statusChangedQueue, projectionQueue, createdDeadLetterQueue,
+				statusChangedDeadLetterQueue, projectionDeadLetterQueue,
 				BindingBuilder.bind(createdQueue).to(paymentEventsExchange).with(properties.createdRoutingKey()),
 				BindingBuilder.bind(statusChangedQueue)
 					.to(paymentEventsExchange)
 					.with(properties.statusChangedRoutingKey()),
+				BindingBuilder.bind(projectionQueue)
+					.to(paymentEventsExchange)
+					.with(properties.createdRoutingKey()),
+				BindingBuilder.bind(projectionQueue)
+					.to(paymentEventsExchange)
+					.with(properties.statusChangedRoutingKey()),
 				BindingBuilder.bind(createdDeadLetterQueue)
 					.to(paymentDeadLetterExchange)
-					.with(createdDeadLetterQueue.getName()),
+					.with(properties.createdQueue()),
 				BindingBuilder.bind(statusChangedDeadLetterQueue)
 					.to(paymentDeadLetterExchange)
-					.with(statusChangedDeadLetterQueue.getName()));
+					.with(properties.statusChangedQueue()),
+				BindingBuilder.bind(projectionDeadLetterQueue)
+					.to(paymentDeadLetterExchange)
+					.with(properties.projectionQueue()));
 	}
 
 	private static Queue deadLetteringQueue(String name, String deadLetterExchange) {
