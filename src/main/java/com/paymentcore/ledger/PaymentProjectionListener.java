@@ -1,5 +1,7 @@
 package com.paymentcore.ledger;
 
+import com.paymentcore.payment.event.PaymentEventHeaders;
+import com.paymentcore.payment.event.PaymentEventType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.amqp.core.Message;
@@ -8,7 +10,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 import java.nio.charset.StandardCharsets;
-import java.util.Locale;
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -29,7 +31,11 @@ public class PaymentProjectionListener {
 
 	private static final Logger log = LoggerFactory.getLogger(PaymentProjectionListener.class);
 
-	private static final String UNKNOWN_EVENT = "UNKNOWN";
+	/**
+	 * Metric tag for a message whose type header is missing or unknown. The tag
+	 * stays bounded instead of echoing arbitrary header values into a metric.
+	 */
+	private static final String UNKNOWN_EVENT_TYPE = "UNKNOWN";
 
 	private final PaymentProjectionService projectionService;
 
@@ -43,28 +49,35 @@ public class PaymentProjectionListener {
 	@RabbitListener(queues = "${app.messaging.projection-queue}",
 			containerFactory = "ledgerListenerContainerFactory")
 	public void onPaymentEvent(Message message) {
-		String eventType = eventType(message);
+		String wireName = eventTypeHeader(message);
+		Optional<PaymentEventType> eventType = PaymentEventType.fromWireName(wireName);
 		try {
 			UUID deliveryId = deliveryId(message);
 			String payload = new String(message.getBody(), StandardCharsets.UTF_8);
-			ProjectionOutcome outcome = projectionService.handle(deliveryId, eventType, payload);
-			metrics.record(outcome, eventType);
+			PaymentEventType type = eventType.orElseThrow(
+					() -> new IllegalArgumentException("Unsupported payment event type: " + wireName));
+			ProjectionOutcome outcome = projectionService.handle(deliveryId, type, payload);
+			metrics.record(outcome, type.wireName());
 			if (outcome == ProjectionOutcome.DUPLICATE) {
-				log.info("Duplicate payment event ignored deliveryId={} eventType={}", deliveryId, eventType);
+				log.info("Duplicate payment event ignored deliveryId={} eventType={}", deliveryId, type.wireName());
 			}
 		}
 		catch (RuntimeException ex) {
-			metrics.recordFailed(eventType);
-			log.warn("Payment event processing failed; retrying then dead-lettering eventType={}", eventType, ex);
+			metrics.recordFailed(eventType.map(PaymentEventType::wireName).orElse(UNKNOWN_EVENT_TYPE));
+			log.warn("Payment event processing failed; retrying then dead-lettering eventType={}", wireName, ex);
 			throw ex;
 		}
 	}
 
-	private static String eventType(Message message) {
-		Object header = message.getMessageProperties().getHeaders().get("eventType");
-		return header instanceof String value && !value.isBlank() ? value.toUpperCase(Locale.ROOT) : UNKNOWN_EVENT;
+	private static String eventTypeHeader(Message message) {
+		return message.getMessageProperties().getHeaders().get(PaymentEventHeaders.EVENT_TYPE) instanceof String value
+				? value : null;
 	}
 
+	/**
+	 * The publisher sets the AMQP message id to the outbox row id, so a redelivery
+	 * of the same row carries the same id and is deduplicated on it.
+	 */
 	private static UUID deliveryId(Message message) {
 		String messageId = message.getMessageProperties().getMessageId();
 		if (messageId == null || messageId.isBlank()) {

@@ -19,6 +19,13 @@ public class SecurityConfiguration {
 
 	private static final Logger log = LoggerFactory.getLogger(SecurityConfiguration.class);
 
+	/**
+	 * Endpoints that are reachable without a token in every mode: probes, metrics,
+	 * the OpenAPI document and error rendering.
+	 */
+	private static final String[] PUBLIC_ENDPOINTS = { "/actuator/health", "/actuator/health/**", "/actuator/info",
+			"/actuator/prometheus", "/error", "/swagger-ui.html", "/swagger-ui/**", "/v3/api-docs/**" };
+
 	private final SecurityProperties properties;
 
 	public SecurityConfiguration(SecurityProperties properties, Environment environment) {
@@ -29,24 +36,21 @@ public class SecurityConfiguration {
 	@Bean
 	SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
 		http.csrf(AbstractHttpConfigurer::disable)
-			.sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
-			.authorizeHttpRequests(requests -> {
-				requests
-					.requestMatchers("/actuator/health", "/actuator/health/**", "/actuator/info",
-							"/actuator/prometheus", "/error", "/swagger-ui.html", "/swagger-ui/**",
-							"/v3/api-docs/**")
-					.permitAll();
-				switch (properties.mode()) {
-					case JWT -> requests.anyRequest().authenticated();
-					case OPEN -> {
-						log.warn("Security mode is OPEN: payment endpoints are accessible without authentication.");
-						requests.anyRequest().permitAll();
-					}
-				}
-			});
+			.sessionManagement((session) -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS));
 
-		if (properties.mode() == SecurityMode.JWT) {
-			http.oauth2ResourceServer(oauth2 -> oauth2.jwt(Customizer.withDefaults()));
+		switch (properties.mode()) {
+			case JWT -> http.oauth2ResourceServer((oauth2) -> oauth2.jwt(Customizer.withDefaults()))
+				.authorizeHttpRequests((requests) -> requests.requestMatchers(PUBLIC_ENDPOINTS)
+					.permitAll()
+					.anyRequest()
+					.authenticated());
+			case OPEN -> {
+				log.warn("Security mode is OPEN: payment endpoints are accessible without authentication.");
+				http.authorizeHttpRequests((requests) -> requests.requestMatchers(PUBLIC_ENDPOINTS)
+					.permitAll()
+					.anyRequest()
+					.permitAll());
+			}
 		}
 
 		return http.build();

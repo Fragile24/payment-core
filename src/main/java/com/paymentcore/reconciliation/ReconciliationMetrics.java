@@ -33,7 +33,8 @@ public class ReconciliationMetrics {
 		meterRegistry.counter(RUNS, "result", "completed").increment();
 		meterRegistry.timer(DURATION, "result", "completed").record(duration);
 		meterRegistry.counter(REPAIRED).increment(summary.repaired());
-		summary.findings().forEach((finding) -> meterRegistry.counter(FINDINGS, "type", finding.type()).increment());
+		summary.findings()
+			.forEach((finding) -> meterRegistry.counter(FINDINGS, "type", finding.type().name()).increment());
 	}
 
 	public void recordSkipped() {

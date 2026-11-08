@@ -37,8 +37,7 @@ class ConfirmedMessagePublisherTest {
 		this.rabbitTemplate = mock(RabbitTemplate.class);
 		this.sentCorrelation = new AtomicReference<>();
 		// Short confirm timeout so the timeout case stays fast.
-		OutboxProperties properties = new OutboxProperties(true, 3, Duration.ofSeconds(10), 5000,
-				Duration.ofMillis(150), 100);
+		OutboxProperties properties = new OutboxProperties(3, Duration.ofSeconds(10), Duration.ofMillis(150), 100);
 		this.publisher = new ConfirmedMessagePublisher(this.rabbitTemplate, properties);
 	}
 
@@ -99,14 +98,16 @@ class ConfirmedMessagePublisherTest {
 	}
 
 	@Test
-	void propagatesConnectionFailure() {
+	void reportsAConnectionFailureAsSuchInsteadOfAConfirmFailure() {
 		doAnswer((invocation) -> {
 			throw new AmqpException("connection refused");
 		}).when(rabbitTemplate).send(anyString(), anyString(), any(Message.class), any(CorrelationData.class));
 
 		assertThatThrownBy(() -> publisher.publish(pendingEvent()))
-			.isInstanceOf(AmqpException.class)
-			.hasMessageContaining("connection refused");
+			.isInstanceOfSatisfying(OutboxPublishException.class, (ex) -> {
+				assertThat(ex.getReason()).isEqualTo(OutboxPublishException.Reason.CONNECTION);
+				assertThat(ex).hasMessageContaining("connection refused");
+			});
 	}
 
 	private void stubSend(Consumer<CorrelationData> afterSend) {

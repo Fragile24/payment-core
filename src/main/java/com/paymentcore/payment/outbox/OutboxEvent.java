@@ -106,6 +106,12 @@ public class OutboxEvent {
 		this.nextAttemptAt = nextStatus == OutboxStatus.PENDING ? Instant.now().plus(retryDelay) : null;
 	}
 
+	/**
+	 * Makes the row due again for the next publish attempt without resetting the
+	 * attempt count, so a row that is still broken fails fast instead of looping.
+	 * Giving a {@code FAILED} row a fresh budget is the operator replay in the
+	 * runbook, not this method.
+	 */
 	public void retryNow() {
 		requireTransition(OutboxStatus.PENDING);
 		this.status = OutboxStatus.PENDING;

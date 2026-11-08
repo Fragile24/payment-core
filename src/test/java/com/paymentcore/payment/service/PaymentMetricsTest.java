@@ -1,6 +1,7 @@
 package com.paymentcore.payment.service;
 
 import com.paymentcore.payment.domain.PaymentAction;
+import com.paymentcore.payment.domain.PaymentTransitionOutcome;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 

@@ -6,8 +6,6 @@ import org.springframework.amqp.core.ExchangeBuilder;
 import org.springframework.amqp.core.Queue;
 import org.springframework.amqp.core.QueueBuilder;
 import org.springframework.amqp.core.TopicExchange;
-import org.springframework.amqp.support.converter.JacksonJsonMessageConverter;
-import org.springframework.amqp.support.converter.MessageConverter;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -85,11 +83,6 @@ public class PaymentMessagingConfiguration {
 
 	private static Queue deadLetterQueue(String sourceQueue) {
 		return QueueBuilder.durable(sourceQueue + ".dlq").build();
-	}
-
-	@Bean
-	MessageConverter jsonMessageConverter() {
-		return new JacksonJsonMessageConverter();
 	}
 
 }

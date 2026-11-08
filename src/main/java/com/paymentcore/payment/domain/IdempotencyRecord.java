@@ -22,21 +22,21 @@ import java.util.UUID;
 @Table(name = "idempotency_keys")
 public class IdempotencyRecord {
 
+	public static final int MAX_IDEMPOTENCY_KEY_LENGTH = 128;
+
 	@Id
 	@GeneratedValue(strategy = GenerationType.UUID)
 	private UUID id;
 
-	@Column(name = "idempotency_key", nullable = false, unique = true, length = 128)
+	@Column(name = "idempotency_key", nullable = false, unique = true, length = MAX_IDEMPOTENCY_KEY_LENGTH)
 	private String idempotencyKey;
 
+	/** Hex-encoded SHA-256 of the canonical request. */
 	@Column(name = "request_hash", nullable = false, length = 64)
 	private String requestHash;
 
 	@Column(name = "payment_id", nullable = false)
 	private UUID paymentId;
-
-	@Column(name = "response_status", nullable = false)
-	private int responseStatus;
 
 	@Column(name = "response_body", nullable = false, columnDefinition = "text")
 	private String responseBody;
@@ -49,12 +49,11 @@ public class IdempotencyRecord {
 	}
 
 	public static IdempotencyRecord completed(String idempotencyKey, String requestHash, UUID paymentId,
-			int responseStatus, String responseBody) {
+			String responseBody) {
 		IdempotencyRecord record = new IdempotencyRecord();
 		record.idempotencyKey = idempotencyKey;
 		record.requestHash = requestHash;
 		record.paymentId = paymentId;
-		record.responseStatus = responseStatus;
 		record.responseBody = responseBody;
 		record.createdAt = Instant.now();
 		return record;
@@ -78,10 +77,6 @@ public class IdempotencyRecord {
 
 	public UUID getPaymentId() {
 		return paymentId;
-	}
-
-	public int getResponseStatus() {
-		return responseStatus;
 	}
 
 	public String getResponseBody() {

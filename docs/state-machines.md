@@ -8,7 +8,7 @@ infrastructure states owned by Spring, Flyway, Docker, or RabbitMQ.
 
 | State machine | Explicit model | Persistence | Owner |
 | --- | --- | --- | --- |
-| Payment lifecycle | `PaymentAction`, `PaymentStatus`, `PaymentStateMachine` | `payments.status`, lifecycle timestamps, `ck_payments_lifecycle_timestamps` | Application + PostgreSQL |
+| Payment lifecycle | `PaymentAction` (target status, allowed sources, timestamp, audit label), `PaymentStatus` | `payments.status`, lifecycle timestamps, `ck_payments_lifecycle_timestamps` | Application + PostgreSQL |
 | Idempotency | `IdempotencyRecord`, `PaymentCreationOutcome` | `idempotency_keys` | Application + PostgreSQL |
 | API mutation outcome | `PaymentCreationOutcome`, `PaymentTransitionOutcome` | Response headers/status | Application |
 | Event delivery | `OutboxEvent`, `OutboxStatus`, `OutboxStateMachine` | `outbox_events` | Application + PostgreSQL + RabbitMQ |
@@ -18,7 +18,7 @@ infrastructure states owned by Spring, Flyway, Docker, or RabbitMQ.
 | Concurrency/version | `@Version`, `findByIdForUpdate` | `payments.version`, row locks | Application + PostgreSQL |
 | Security mode | `SecurityMode` | Configuration | Application |
 | Runtime/container | Spring Boot + Docker Compose configuration | Docker engine | Spring Boot / Docker |
-| Schema migration | Flyway migrations V1–V6 | `flyway_schema_history` | Flyway |
+| Schema migration | Flyway migrations V1–V8 | `flyway_schema_history` | Flyway |
 | Rabbit connection | Spring AMQP connection factory | Broker/connection | Spring AMQP |
 | Transaction phase | `@Transactional`, `@TransactionalEventListener` | Database transaction | Spring |
 
@@ -26,9 +26,11 @@ infrastructure states owned by Spring, Flyway, Docker, or RabbitMQ.
 
 Single source of truth:
 
-- `com.paymentcore.payment.domain.PaymentAction`
-- `com.paymentcore.payment.domain.PaymentStateMachine`
-- `com.paymentcore.payment.domain.Payment.apply(PaymentAction)`
+- `com.paymentcore.payment.domain.PaymentAction` — each action declares the status it targets, the statuses it
+  may be applied from, the lifecycle timestamp it stamps and how the audit trail describes it.
+- `com.paymentcore.payment.domain.Payment.apply(PaymentAction)` — returns `APPLIED` or `REPLAYED`, enforces
+  the source-status rule and applies the action's timestamp, so a transition cannot be added without its
+  timestamp being stamped.
 
 | From \ Action | AUTHORIZE | CAPTURE | REFUND | CANCEL | FAIL |
 | --- | --- | --- | --- | --- | --- |
@@ -67,8 +69,7 @@ UNUSED
 
 - `com.paymentcore.payment.domain.IdempotencyRecord`
 - Unique constraint: `idempotency_keys.idempotency_key`
-- Stored fields: request hash, payment id, response status, response body,
-  created timestamp.
+- Stored fields: request hash, payment id, response body, created timestamp.
 - The response body is a JSON snapshot of the original creation response.
   Replaying a create after lifecycle changes returns the original snapshot,
   not the current payment state.

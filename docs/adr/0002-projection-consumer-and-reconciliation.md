@@ -45,8 +45,8 @@ Building a consumer raises the questions the outbox cannot answer:
 - A scheduled sweep runs every `app.reconciliation.interval-ms` (default 5
   minutes) behind a database lease (`scheduled_job_lock`), so concurrent
   instances cannot sweep twice.
-- It compares `payments` with `payment_projection` (missing rows and status
-  mismatch), counts orphan projections, and reports the outbox backlog
+- It compares `payments` with `payment_projection` (missing rows, and status or
+  version mismatch), counts orphan projections, and reports the outbox backlog
   (`PENDING`, stuck `PENDING`, `FAILED`).
 - Only the **projection** is repaired, and only from the source of truth
   (`payments`), never by republishing events. Source rows are never mutated:

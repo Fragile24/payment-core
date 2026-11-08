@@ -26,8 +26,8 @@ public class ReconciliationScheduler {
 		this.reconciliationService = reconciliationService;
 	}
 
-	@Scheduled(fixedDelayString = "${app.reconciliation.interval-ms:300000}",
-			initialDelayString = "${app.reconciliation.initial-delay-ms:30000}")
+	@Scheduled(fixedDelayString = "${app.reconciliation.interval-ms}",
+			initialDelayString = "${app.reconciliation.initial-delay-ms}")
 	public void reconcileOnSchedule() {
 		try {
 			reconciliationService.reconcile();

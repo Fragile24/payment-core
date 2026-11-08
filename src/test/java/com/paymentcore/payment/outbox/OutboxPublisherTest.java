@@ -32,8 +32,7 @@ class OutboxPublisherTest {
 		this.outboxEvents = mock(OutboxEventRepository.class);
 		this.messagePublisher = mock(ConfirmedMessagePublisher.class);
 		this.meterRegistry = new SimpleMeterRegistry();
-		OutboxProperties properties = new OutboxProperties(true, 3, Duration.ofSeconds(10), 5000,
-				Duration.ofSeconds(2), 100);
+		OutboxProperties properties = new OutboxProperties(3, Duration.ofSeconds(10), Duration.ofSeconds(2), 100);
 		this.publisher = new OutboxPublisher(this.outboxEvents, this.messagePublisher, properties,
 				new OutboxPublishMetrics(this.meterRegistry));
 	}
@@ -78,7 +77,9 @@ class OutboxPublisherTest {
 	void reportsConnectionFailuresWithTheirOwnReason() {
 		OutboxEvent event = pendingEvent();
 		when(outboxEvents.findByIdForUpdate(event.getId())).thenReturn(Optional.of(event));
-		doThrow(new org.springframework.amqp.AmqpConnectException(new java.net.ConnectException("refused")))
+		doThrow(new OutboxPublishException(OutboxPublishException.Reason.CONNECTION,
+				"could not send outboxId=%s: connection refused".formatted(event.getId()),
+				new org.springframework.amqp.AmqpConnectException(new java.net.ConnectException("refused"))))
 			.when(messagePublisher)
 			.publish(event);
 

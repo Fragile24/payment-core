@@ -7,7 +7,6 @@ import jakarta.persistence.Enumerated;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
-import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
 import jakarta.persistence.Version;
 
@@ -15,9 +14,27 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.UUID;
 
+/**
+ * The payment aggregate.
+ *
+ * <p>The length and precision constants are the Java side of the column
+ * definitions in the Flyway migrations. The request DTO and the request
+ * normalizer use them too, so a limit is written once.</p>
+ */
 @Entity
 @Table(name = "payments")
 public class Payment {
+
+	public static final int AMOUNT_PRECISION = 19;
+
+	public static final int MONEY_SCALE = 2;
+
+	/** Integer digits that fit in {@link #AMOUNT_PRECISION} with {@link #MONEY_SCALE}. */
+	public static final int AMOUNT_MAX_INTEGER_DIGITS = AMOUNT_PRECISION - MONEY_SCALE;
+
+	public static final int MERCHANT_REFERENCE_MAX_LENGTH = 128;
+
+	public static final int DESCRIPTION_MAX_LENGTH = 255;
 
 	@Id
 	@GeneratedValue(strategy = GenerationType.UUID)
@@ -27,16 +44,16 @@ public class Payment {
 	@Column(name = "status", nullable = false, length = 32)
 	private PaymentStatus status;
 
-	@Column(name = "amount", nullable = false, precision = 19, scale = 2)
+	@Column(name = "amount", nullable = false, precision = AMOUNT_PRECISION, scale = MONEY_SCALE)
 	private BigDecimal amount;
 
 	@Column(name = "currency", nullable = false, length = 3)
 	private String currency;
 
-	@Column(name = "merchant_reference", length = 128)
+	@Column(name = "merchant_reference", length = MERCHANT_REFERENCE_MAX_LENGTH)
 	private String merchantReference;
 
-	@Column(name = "description", length = 255)
+	@Column(name = "description", length = DESCRIPTION_MAX_LENGTH)
 	private String description;
 
 	@Version
@@ -81,29 +98,43 @@ public class Payment {
 	}
 
 	/**
-	 * Applies a lifecycle action through the explicit state machine.
-	 * Callers must handle the idempotent "already in target state" case first.
+	 * Applies a lifecycle action. Repeating an action the payment has already
+	 * reached is a replay and changes nothing; any other transition the action
+	 * does not allow is rejected.
 	 */
-	public void apply(PaymentAction action) {
-		if (!PaymentStateMachine.canApply(action, this.status)) {
+	public PaymentTransitionOutcome apply(PaymentAction action) {
+		if (action.isReplayOf(this.status)) {
+			return PaymentTransitionOutcome.REPLAYED;
+		}
+		if (!action.appliesFrom(this.status)) {
 			throw new PaymentStateException(this.id, this.status, action);
 		}
 
-		this.status = action.targetStatus();
 		Instant now = Instant.now();
-		switch (action) {
-			case AUTHORIZE -> this.authorizedAt = now;
-			case CAPTURE -> this.capturedAt = now;
-			case REFUND -> this.refundedAt = now;
-			case CANCEL -> this.cancelledAt = now;
-			case FAIL -> this.failedAt = now;
-		}
+		this.status = action.targetStatus();
+		action.stampOn(this, now);
 		this.updatedAt = now;
+		return PaymentTransitionOutcome.APPLIED;
 	}
 
-	@PreUpdate
-	void markUpdated() {
-		this.updatedAt = Instant.now();
+	void markAuthorized(Instant at) {
+		this.authorizedAt = at;
+	}
+
+	void markCaptured(Instant at) {
+		this.capturedAt = at;
+	}
+
+	void markRefunded(Instant at) {
+		this.refundedAt = at;
+	}
+
+	void markCancelled(Instant at) {
+		this.cancelledAt = at;
+	}
+
+	void markFailed(Instant at) {
+		this.failedAt = at;
 	}
 
 	public UUID getId() {

@@ -4,12 +4,13 @@ import org.springframework.amqp.rabbit.config.RetryInterceptorBuilder;
 import org.springframework.amqp.rabbit.config.SimpleRabbitListenerContainerFactory;
 import org.springframework.amqp.rabbit.connection.ConnectionFactory;
 import org.springframework.amqp.rabbit.retry.RejectAndDontRequeueRecoverer;
+import org.springframework.amqp.support.converter.JacksonJsonMessageConverter;
 import org.springframework.amqp.support.converter.MessageConverter;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 /**
- * Listener container with an explicit retry contract.
+ * The consumer's listener container and message decoding.
  *
  * <p>Three attempts (one initial plus two retries) with a short exponential
  * backoff cover transient database or deserialization hiccups. When the budget
@@ -37,6 +38,11 @@ public class LedgerConsumerConfiguration {
 			.recoverer(new RejectAndDontRequeueRecoverer())
 			.build());
 		return factory;
+	}
+
+	@Bean
+	MessageConverter jsonMessageConverter() {
+		return new JacksonJsonMessageConverter();
 	}
 
 }

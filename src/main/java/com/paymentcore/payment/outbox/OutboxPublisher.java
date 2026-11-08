@@ -64,24 +64,20 @@ public class OutboxPublisher {
 		}
 	}
 
-	@Transactional(propagation = Propagation.REQUIRES_NEW)
-	public void retryFailed(UUID outboxEventId) {
-		outboxEvents.findByIdForUpdate(outboxEventId).ifPresent(OutboxEvent::retryNow);
-	}
-
 	private String describe(RuntimeException ex) {
 		String message = ex.getMessage();
 		return message != null ? message : ex.getClass().getSimpleName();
 	}
 
 	/**
-	 * Failure reason tag. Anything that is not a publish-confirmation failure is
-	 * classified as a connection problem, which is what a broker outage looks
-	 * like from here.
+	 * Failure reason tag. Publish outcomes arrive as
+	 * {@link OutboxPublishException} with a reason; anything else escaped the
+	 * publisher unexpectedly and is tagged as such instead of being blamed on the
+	 * broker.
 	 */
 	private static String failureReason(RuntimeException ex) {
 		return ex instanceof OutboxPublishException publishException
-				? publishException.getReason().name().toLowerCase(Locale.ROOT) : "connection";
+				? publishException.getReason().name().toLowerCase(Locale.ROOT) : "unexpected";
 	}
 
 	private static Duration elapsedSince(long startedAtNanos) {

@@ -1,10 +1,6 @@
 package com.paymentcore.common.api;
 
 import com.paymentcore.common.observability.RequestIdFilter;
-import com.paymentcore.payment.domain.PaymentStateException;
-import com.paymentcore.payment.service.IdempotencyKeyConflictException;
-import com.paymentcore.payment.service.InvalidPaymentRequestException;
-import com.paymentcore.payment.service.PaymentNotFoundException;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.MDC;
 import org.springframework.core.Ordered;
@@ -33,41 +29,10 @@ public class ApiExceptionHandler {
 
 	private static final String PROBLEM_TYPE_BASE = "https://paymentcore.dev/problems/";
 
-	@ExceptionHandler(PaymentNotFoundException.class)
-	ProblemDetail handlePaymentNotFound(PaymentNotFoundException ex, HttpServletRequest request) {
-		return problem(HttpStatus.NOT_FOUND, "PAYMENT_NOT_FOUND", "Payment not found", ex.getMessage(), request);
-	}
-
-	@ExceptionHandler(IdempotencyKeyConflictException.class)
-	ProblemDetail handleIdempotencyConflict(IdempotencyKeyConflictException ex, HttpServletRequest request) {
-		return problem(HttpStatus.CONFLICT, "IDEMPOTENCY_KEY_REUSED", "Idempotency key reused", ex.getMessage(),
-				request);
-	}
-
-	@ExceptionHandler(PaymentStateException.class)
-	ProblemDetail handlePaymentState(PaymentStateException ex, HttpServletRequest request) {
-		ProblemDetail problem = problem(HttpStatus.CONFLICT, "INVALID_PAYMENT_STATE",
-				"Invalid payment state transition", ex.getMessage(), request);
-		problem.setProperty("currentStatus", ex.getCurrentStatus());
-		problem.setProperty("action", ex.getAction());
-		problem.setProperty("targetStatus", ex.getTargetStatus());
-		return problem;
-	}
-
 	@ExceptionHandler(OptimisticLockingFailureException.class)
 	ProblemDetail handleOptimisticLock(OptimisticLockingFailureException ex, HttpServletRequest request) {
 		return problem(HttpStatus.CONFLICT, "CONCURRENT_MODIFICATION", "Concurrent modification",
 				"The resource was modified by another request. Retry the operation.", request);
-	}
-
-	@ExceptionHandler(InvalidPaymentRequestException.class)
-	ProblemDetail handleInvalidPaymentRequest(InvalidPaymentRequestException ex, HttpServletRequest request) {
-		ProblemDetail problem = problem(HttpStatus.BAD_REQUEST, "INVALID_PAYMENT_REQUEST", "Invalid payment request",
-				ex.getMessage(), request);
-		if (ex.getField() != null) {
-			problem.setProperty("field", ex.getField());
-		}
-		return problem;
 	}
 
 	@ExceptionHandler(MethodArgumentNotValidException.class)
@@ -112,7 +77,7 @@ public class ApiExceptionHandler {
 				"Sort property '" + ex.getPropertyName() + "' does not exist.", request);
 	}
 
-	private ProblemDetail problem(HttpStatus status, String code, String title, String detail,
+	public static ProblemDetail problem(HttpStatus status, String code, String title, String detail,
 			HttpServletRequest request) {
 		ProblemDetail problem = ProblemDetail.forStatusAndDetail(status, detail);
 		problem.setTitle(title);

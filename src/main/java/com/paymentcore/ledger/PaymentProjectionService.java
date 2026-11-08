@@ -1,6 +1,7 @@
 package com.paymentcore.ledger;
 
 import com.paymentcore.payment.event.PaymentCreatedEvent;
+import com.paymentcore.payment.event.PaymentEventType;
 import com.paymentcore.payment.event.PaymentStatusChangedEvent;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -22,10 +23,6 @@ public class PaymentProjectionService {
 
 	static final String CONSUMER_NAME = "payment-projection-v1";
 
-	static final String CREATED_EVENT = "PAYMENT_CREATED";
-
-	static final String STATUS_CHANGED_EVENT = "PAYMENT_STATUS_CHANGED";
-
 	private final ProcessedEventStore processedEvents;
 
 	private final PaymentProjectionStore projection;
@@ -40,25 +37,27 @@ public class PaymentProjectionService {
 	}
 
 	@Transactional
-	public ProjectionOutcome handle(UUID deliveryId, String eventType, String payload) {
-		if (processedEvents.insertIfAbsent(deliveryId, CONSUMER_NAME) == 0) {
+	public ProjectionOutcome handle(UUID deliveryId, PaymentEventType eventType, String payload) {
+		if (!processedEvents.claim(deliveryId, CONSUMER_NAME)) {
 			return ProjectionOutcome.DUPLICATE;
 		}
 
-		switch (eventType) {
-			case CREATED_EVENT -> {
-				PaymentCreatedEvent event = read(payload, PaymentCreatedEvent.class);
-				projection.apply(event.paymentId(), event.status(), event.amount(), event.currency(),
-						event.paymentVersion(), deliveryId);
-			}
-			case STATUS_CHANGED_EVENT -> {
-				PaymentStatusChangedEvent event = read(payload, PaymentStatusChangedEvent.class);
-				projection.apply(event.paymentId(), event.toStatus(), event.amount(), event.currency(),
-						event.paymentVersion(), deliveryId);
-			}
-			default -> throw new IllegalArgumentException("Unsupported payment event type: " + eventType);
-		}
+		ProjectionRow row = switch (eventType) {
+			case CREATED -> rowOf(read(payload, PaymentCreatedEvent.class));
+			case STATUS_CHANGED -> rowOf(read(payload, PaymentStatusChangedEvent.class));
+		};
+		projection.apply(row);
 		return ProjectionOutcome.PROCESSED;
+	}
+
+	private static ProjectionRow rowOf(PaymentCreatedEvent event) {
+		return new ProjectionRow(event.paymentId(), event.status(), event.amount(), event.currency(),
+				event.paymentVersion());
+	}
+
+	private static ProjectionRow rowOf(PaymentStatusChangedEvent event) {
+		return new ProjectionRow(event.paymentId(), event.toStatus(), event.amount(), event.currency(),
+				event.paymentVersion());
 	}
 
 	private <T> T read(String payload, Class<T> eventType) {

@@ -85,6 +85,22 @@ class ReconciliationIntegrationTest {
 	}
 
 	@Test
+	void repairsAVersionOnlyDriftAndDescribesItAsSuch() {
+		UUID paymentId = paymentService.create("reconcile-0002", paymentRequest()).payment().id();
+		assertThat(reconciliationService.reconcile()).isEqualTo(ReconciliationOutcome.COMPLETED);
+
+		// Status agrees with the source, the version does not: still drift.
+		jdbc.update("UPDATE payment_projection SET version = 99 WHERE payment_id = ?", paymentId);
+
+		assertThat(reconciliationService.reconcile()).isEqualTo(ReconciliationOutcome.COMPLETED);
+
+		UUID runId = latestRunId();
+		assertThat(countFindings(runId, "STALE_PROJECTION")).isEqualTo(1);
+		assertThat(runLongColumn(runId, "repaired")).isEqualTo(1);
+		assertThat(projectionVersion(paymentId)).isZero();
+	}
+
+	@Test
 	void skipsWhenAnotherInstanceHoldsTheLease() {
 		jdbc.update("UPDATE scheduled_job_lock SET locked_until = now() + INTERVAL '1 hour' WHERE job_name = ?",
 				ReconciliationService.JOB_NAME);
@@ -106,8 +122,8 @@ class ReconciliationIntegrationTest {
 
 	private void insertProjection(UUID paymentId, String status, BigDecimal amount, String currency, long version) {
 		jdbc.update("""
-				INSERT INTO payment_projection (payment_id, status, amount, currency, version, last_event_id, updated_at)
-				VALUES (?, ?, ?, ?, ?, NULL, now())
+				INSERT INTO payment_projection (payment_id, status, amount, currency, version, updated_at)
+				VALUES (?, ?, ?, ?, ?, now())
 				""", paymentId, status, amount, currency, version);
 	}
 

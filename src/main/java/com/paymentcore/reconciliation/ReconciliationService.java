@@ -1,10 +1,5 @@
 package com.paymentcore.reconciliation;
 
-import com.paymentcore.ledger.PaymentProjectionStore;
-import com.paymentcore.ledger.ProjectionMismatch;
-import com.paymentcore.payment.outbox.OutboxEventRepository;
-import com.paymentcore.payment.outbox.OutboxStatus;
-import com.paymentcore.payment.repository.PaymentRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -36,11 +31,7 @@ public class ReconciliationService {
 
 	private static final Logger log = LoggerFactory.getLogger(ReconciliationService.class);
 
-	private final PaymentRepository payments;
-
-	private final OutboxEventRepository outboxEvents;
-
-	private final PaymentProjectionStore projection;
+	private final ReconciliationStore store;
 
 	private final ProjectionRepairer repairer;
 
@@ -52,12 +43,10 @@ public class ReconciliationService {
 
 	private final ReconciliationMetrics metrics;
 
-	public ReconciliationService(PaymentRepository payments, OutboxEventRepository outboxEvents,
-			PaymentProjectionStore projection, ProjectionRepairer repairer, ReconciliationRunStore runStore,
-			DatabaseJobLock jobLock, ReconciliationProperties properties, ReconciliationMetrics metrics) {
-		this.payments = payments;
-		this.outboxEvents = outboxEvents;
-		this.projection = projection;
+	public ReconciliationService(ReconciliationStore store, ProjectionRepairer repairer,
+			ReconciliationRunStore runStore, DatabaseJobLock jobLock, ReconciliationProperties properties,
+			ReconciliationMetrics metrics) {
+		this.store = store;
 		this.repairer = repairer;
 		this.runStore = runStore;
 		this.jobLock = jobLock;
@@ -106,35 +95,31 @@ public class ReconciliationService {
 	}
 
 	private ReconciliationSummary sweep() {
-		long paymentsChecked = payments.count();
+		long paymentsChecked = store.countPayments();
 
-		List<ProjectionMismatch> mismatches = projection.findMismatches(properties.batchSize());
+		List<ProjectionMismatch> mismatches = store.findProjectionMismatches(properties.batchSize());
 		long repaired = repairer.repair(mismatches.stream().map(ProjectionMismatch::paymentId).toList());
 
-		List<UUID> orphans = projection.findOrphanPaymentIds(properties.batchSize());
+		List<UUID> orphans = store.findOrphanProjectionIds(properties.batchSize());
 
-		long outboxPending = outboxEvents.countByStatus(OutboxStatus.PENDING);
-		Instant stuckBefore = Instant.now().minus(properties.outboxStuckAfter());
-		long outboxStuck = outboxEvents.countByStatusAndCreatedAtBefore(OutboxStatus.PENDING, stuckBefore);
-		long outboxFailed = outboxEvents.countByStatus(OutboxStatus.FAILED);
+		long outboxPending = store.countPendingOutboxEvents();
+		long outboxStuck = store.countPendingOutboxEventsCreatedBefore(
+				Instant.now().minus(properties.outboxStuckAfter()));
+		long outboxFailed = store.countFailedOutboxEvents();
 
 		List<ReconciliationFinding> findings = new ArrayList<>();
-		for (ProjectionMismatch mismatch : mismatches) {
-			findings.add(new ReconciliationFinding(
-					mismatch.isMissing() ? "MISSING_PROJECTION" : "STALE_PROJECTION", mismatch.paymentId(),
-					mismatch.expectedStatus(), mismatch.actualStatus(),
-					mismatch.isMissing() ? "Projection row does not exist" : "Projection status differs from source"));
-		}
+		mismatches.forEach((mismatch) -> findings.add(new ReconciliationFinding(mismatch.type(), mismatch.paymentId(),
+				mismatch.expectedStatus(), mismatch.actualStatus(), mismatch.details())));
 		for (UUID paymentId : orphans) {
-			findings.add(new ReconciliationFinding("ORPHAN_PROJECTION", paymentId, null, null,
+			findings.add(new ReconciliationFinding(ReconciliationFindingType.ORPHAN_PROJECTION, paymentId, null, null,
 					"Projection row has no matching payment"));
 		}
 		if (outboxStuck > 0) {
-			findings.add(new ReconciliationFinding("OUTBOX_PENDING_STUCK", null, null, null,
+			findings.add(new ReconciliationFinding(ReconciliationFindingType.OUTBOX_PENDING_STUCK, null, null, null,
 					outboxStuck + " events have been pending for longer than " + properties.outboxStuckAfter()));
 		}
 		if (outboxFailed > 0) {
-			findings.add(new ReconciliationFinding("OUTBOX_FAILED", null, null, null,
+			findings.add(new ReconciliationFinding(ReconciliationFindingType.OUTBOX_FAILED, null, null, null,
 					outboxFailed + " events exhausted their retry budget"));
 		}
 

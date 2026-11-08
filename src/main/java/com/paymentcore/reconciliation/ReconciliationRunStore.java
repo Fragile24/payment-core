@@ -50,8 +50,8 @@ public class ReconciliationRunStore {
 					INSERT INTO reconciliation_findings
 					    (id, run_id, type, payment_id, expected_status, actual_status, details, created_at)
 					VALUES (?, ?, ?, ?, ?, ?, ?, now())
-					""", UUID.randomUUID(), runId, finding.type(), finding.paymentId(), finding.expectedStatus(),
-					finding.actualStatus(), finding.details());
+					""", UUID.randomUUID(), runId, finding.type().name(), finding.paymentId(),
+					finding.expectedStatus(), finding.actualStatus(), finding.details());
 		}
 	}
 
@@ -61,12 +61,7 @@ public class ReconciliationRunStore {
 				UPDATE reconciliation_runs
 				SET finished_at = now(), status = 'FAILED', error = ?
 				WHERE id = ?
-				""", truncate(failure), runId);
-	}
-
-	private static String truncate(RuntimeException failure) {
-		String message = failure.getClass().getSimpleName() + ": " + failure.getMessage();
-		return message.length() <= 2000 ? message : message.substring(0, 2000);
+				""", failure.getClass().getSimpleName() + ": " + failure.getMessage(), runId);
 	}
 
 }

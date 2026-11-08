@@ -1,5 +1,7 @@
 package com.paymentcore.payment.outbox;
 
+import com.paymentcore.payment.event.PaymentEventHeaders;
+import org.springframework.amqp.AmqpException;
 import org.springframework.amqp.core.Message;
 import org.springframework.amqp.core.MessageBuilder;
 import org.springframework.amqp.core.MessageProperties;
@@ -38,8 +40,6 @@ import java.util.concurrent.TimeoutException;
 @Component
 public class ConfirmedMessagePublisher {
 
-	static final String OUTBOX_ATTEMPTS_HEADER = "outboxAttempts";
-
 	private final RabbitTemplate rabbitTemplate;
 
 	private final OutboxProperties properties;
@@ -52,16 +52,21 @@ public class ConfirmedMessagePublisher {
 	/**
 	 * Sends the event and blocks until the broker confirms it.
 	 * @param event the outbox row to publish
-	 * @throws OutboxPublishException when the broker nacks, returns, the confirm
-	 * times out, or the send itself fails
+	 * @throws OutboxPublishException when the send fails, the broker nacks or
+	 * returns the message, or the confirm times out
 	 */
 	public void publish(OutboxEvent event) {
 		// The id correlates the confirm with this send. It must be unique across
 		// retries of the same event, otherwise a late confirm from a previous
 		// attempt could be mistaken for the current one.
-		CorrelationData correlationData = new CorrelationData(
-				"%s:%s".formatted(event.getId(), UUID.randomUUID()));
-		rabbitTemplate.send(event.getExchange(), event.getRoutingKey(), toMessage(event), correlationData);
+		CorrelationData correlationData = new CorrelationData("%s:%s".formatted(event.getId(), UUID.randomUUID()));
+		try {
+			rabbitTemplate.send(event.getExchange(), event.getRoutingKey(), toMessage(event), correlationData);
+		}
+		catch (AmqpException ex) {
+			throw new OutboxPublishException(OutboxPublishException.Reason.CONNECTION,
+					"could not send outboxId=%s: %s".formatted(event.getId(), ex.getMessage()), ex);
+		}
 		awaitConfirmation(event, correlationData);
 	}
 
@@ -70,10 +75,10 @@ public class ConfirmedMessagePublisher {
 			.setContentType(MessageProperties.CONTENT_TYPE_JSON)
 			.setContentEncoding(StandardCharsets.UTF_8.name())
 			.setMessageId(event.getId().toString())
-			.setHeader("eventType", event.getEventType())
-			.setHeader("aggregateType", event.getAggregateType())
-			.setHeader("aggregateId", event.getAggregateId().toString())
-			.setHeader(OUTBOX_ATTEMPTS_HEADER, event.getAttempts())
+			.setHeader(PaymentEventHeaders.EVENT_TYPE, event.getEventType())
+			.setHeader(PaymentEventHeaders.AGGREGATE_TYPE, event.getAggregateType())
+			.setHeader(PaymentEventHeaders.AGGREGATE_ID, event.getAggregateId().toString())
+			.setHeader(PaymentEventHeaders.OUTBOX_ATTEMPTS, event.getAttempts())
 			.build();
 	}
 

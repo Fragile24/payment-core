@@ -30,7 +30,7 @@ public class OutboxScheduler {
 		this.outboxPublisher = outboxPublisher;
 	}
 
-	@Scheduled(fixedDelayString = "${app.outbox.poll-interval-ms:5000}")
+	@Scheduled(fixedDelayString = "${app.outbox.poll-interval-ms}")
 	public void dispatchPending() {
 		List<UUID> due = outboxEvents.findDueIds(OutboxStatus.PENDING, Instant.now(), PageRequest.of(0, 50));
 		for (UUID outboxEventId : due) {

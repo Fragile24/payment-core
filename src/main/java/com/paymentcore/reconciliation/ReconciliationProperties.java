@@ -7,8 +7,14 @@ import org.springframework.validation.annotation.Validated;
 
 import java.time.Duration;
 
+/**
+ * Reconciliation settings. {@code app.reconciliation.enabled},
+ * {@code app.reconciliation.interval-ms} and
+ * {@code app.reconciliation.initial-delay-ms} are read by
+ * {@link ReconciliationScheduler} directly, so they are not bound here.
+ */
 @Validated
 @ConfigurationProperties(prefix = "app.reconciliation")
-public record ReconciliationProperties(boolean enabled, @Min(1000) long intervalMs, @Min(0) long initialDelayMs,
-		@Min(1) int batchSize, @NotNull Duration outboxStuckAfter, @NotNull Duration lockTtl) {
+public record ReconciliationProperties(@Min(1) int batchSize, @NotNull Duration outboxStuckAfter,
+		@NotNull Duration lockTtl) {
 }

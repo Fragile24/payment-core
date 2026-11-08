@@ -27,10 +27,6 @@ public final class OutboxStateMachine {
 		return ALLOWED_TRANSITIONS.contains(new Transition(from, to));
 	}
 
-	public static boolean isDelivered(OutboxStatus status) {
-		return status == OutboxStatus.PUBLISHED;
-	}
-
 	public static OutboxStatus afterFailure(int attempts, int maxAttempts) {
 		return attempts >= maxAttempts ? OutboxStatus.FAILED : OutboxStatus.PENDING;
 	}

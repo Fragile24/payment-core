@@ -37,8 +37,7 @@ class OutboxHealthIndicatorTest {
 	}
 
 	private OutboxProperties properties(long failedHealthThreshold) {
-		return new OutboxProperties(true, 5, Duration.ofSeconds(10), 5000, Duration.ofSeconds(5),
-				failedHealthThreshold);
+		return new OutboxProperties(5, Duration.ofSeconds(10), Duration.ofSeconds(5), failedHealthThreshold);
 	}
 
 }

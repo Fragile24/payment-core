@@ -62,11 +62,42 @@ class ArchitectureTest {
 		.beFreeOfCycles();
 
 	@ArchTest
+	static final ArchRule commonDoesNotDependOnFeatureModules = noClasses().that()
+		.resideInAPackage("com.paymentcore.common..")
+		.should()
+		.dependOnClassesThat()
+		.resideInAnyPackage("com.paymentcore.payment..", "com.paymentcore.ledger..",
+				"com.paymentcore.reconciliation..");
+
+	@ArchTest
+	static final ArchRule paymentDoesNotDependOnDownstreamModules = noClasses().that()
+		.resideInAPackage("com.paymentcore.payment..")
+		.should()
+		.dependOnClassesThat()
+		.resideInAnyPackage("com.paymentcore.ledger..", "com.paymentcore.reconciliation..");
+
+	@ArchTest
+	static final ArchRule ledgerOnlyDependsOnThePublishedEventContract = noClasses().that()
+		.resideInAPackage("com.paymentcore.ledger..")
+		.should()
+		.dependOnClassesThat()
+		.resideInAnyPackage("com.paymentcore.payment.api..", "com.paymentcore.payment.service..",
+				"com.paymentcore.payment.repository..", "com.paymentcore.payment.outbox..",
+				"com.paymentcore.payment.dto..", "com.paymentcore.payment.domain..");
+
+	@ArchTest
 	static final ArchRule ledgerDoesNotDependOnReconciliation = noClasses().that()
 		.resideInAPackage("com.paymentcore.ledger..")
 		.should()
 		.dependOnClassesThat()
 		.resideInAPackage("com.paymentcore.reconciliation..");
+
+	@ArchTest
+	static final ArchRule reconciliationDoesNotDependOnThePaymentModule = noClasses().that()
+		.resideInAPackage("com.paymentcore.reconciliation..")
+		.should()
+		.dependOnClassesThat()
+		.resideInAPackage("com.paymentcore.payment..");
 
 	@ArchTest
 	static final ArchRule reconciliationDoesNotDependOnWeb = noClasses().that()

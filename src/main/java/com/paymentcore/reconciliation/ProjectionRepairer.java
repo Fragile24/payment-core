@@ -1,12 +1,13 @@
 package com.paymentcore.reconciliation;
 
 import com.paymentcore.ledger.PaymentProjectionStore;
-import com.paymentcore.payment.domain.Payment;
-import com.paymentcore.payment.repository.PaymentRepository;
+import com.paymentcore.ledger.ProjectionRow;
+import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -21,12 +22,16 @@ import java.util.UUID;
 @Service
 public class ProjectionRepairer {
 
-	private final PaymentRepository payments;
+	private static final String PAYMENT_ROWS = """
+			SELECT id, status, amount, currency, version FROM payments WHERE id IN (:paymentIds)
+			""";
+
+	private final NamedParameterJdbcTemplate jdbc;
 
 	private final PaymentProjectionStore projection;
 
-	public ProjectionRepairer(PaymentRepository payments, PaymentProjectionStore projection) {
-		this.payments = payments;
+	public ProjectionRepairer(NamedParameterJdbcTemplate jdbc, PaymentProjectionStore projection) {
+		this.jdbc = jdbc;
 		this.projection = projection;
 	}
 
@@ -35,9 +40,11 @@ public class ProjectionRepairer {
 		if (paymentIds.isEmpty()) {
 			return 0;
 		}
-		List<Payment> found = payments.findAllById(paymentIds);
-		found.forEach(projection::overwriteFromPayment);
-		return found.size();
+		List<ProjectionRow> rows = jdbc.query(PAYMENT_ROWS, Map.of("paymentIds", paymentIds),
+				(rs, rowNum) -> new ProjectionRow(rs.getObject("id", UUID.class), rs.getString("status"),
+						rs.getBigDecimal("amount"), rs.getString("currency"), rs.getLong("version")));
+		rows.forEach(projection::overwrite);
+		return rows.size();
 	}
 
 }

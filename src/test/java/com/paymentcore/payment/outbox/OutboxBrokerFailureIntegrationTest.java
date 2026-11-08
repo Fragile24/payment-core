@@ -2,6 +2,8 @@ package com.paymentcore.payment.outbox;
 
 import com.paymentcore.TestcontainersConfiguration;
 import com.paymentcore.payment.event.MessagingProperties;
+import com.paymentcore.payment.event.PaymentEventHeaders;
+import com.paymentcore.payment.event.PaymentEventType;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -11,6 +13,7 @@ import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.testcontainers.containers.Container.ExecResult;
 import org.testcontainers.rabbitmq.RabbitMQContainer;
 
@@ -61,6 +64,9 @@ class OutboxBrokerFailureIntegrationTest {
 	private MessagingProperties messaging;
 
 	@Autowired
+	private JdbcTemplate jdbc;
+
+	@Autowired
 	private RabbitMQContainer rabbitmq;
 
 	@BeforeEach
@@ -96,9 +102,9 @@ class OutboxBrokerFailureIntegrationTest {
 			startBrokerApplication();
 		}
 
-		// Recovery path: the row is old enough now, so the scheduler must be able
+		// Recovery path: the retry delay has elapsed, so the scheduler must be able
 		// to publish it once the broker confirms again.
-		outboxPublisher.retryFailed(outboxId);
+		jdbc.update("UPDATE outbox_events SET next_attempt_at = now() WHERE id = ?", outboxId);
 		outboxScheduler.dispatchPending();
 
 		OutboxEvent published = reload(outboxId);
@@ -109,7 +115,7 @@ class OutboxBrokerFailureIntegrationTest {
 		Message message = rabbitTemplate.receive(messaging.createdQueue(), 10_000);
 		assertThat(message).isNotNull();
 		assertThat(message.getMessageProperties().getMessageId()).isEqualTo(outboxId.toString());
-		Object attemptsHeader = message.getMessageProperties().getHeader("outboxAttempts");
+		Object attemptsHeader = message.getMessageProperties().getHeader(PaymentEventHeaders.OUTBOX_ATTEMPTS);
 		assertThat(attemptsHeader).isEqualTo(1);
 	}
 
@@ -130,9 +136,17 @@ class OutboxBrokerFailureIntegrationTest {
 		return outboxEvents.findById(outboxId).orElseThrow();
 	}
 
+	/**
+	 * A routable, schema-complete event: this test is about broker failures, so the
+	 * projection consumer must be able to read the payload rather than
+	 * dead-lettering it.
+	 */
 	private OutboxEvent pendingEvent(String routingKey) {
-		return OutboxEvent.pending("PAYMENT", UUID.randomUUID(), "PAYMENT_CREATED", messaging.exchange(), routingKey,
-				"{\"paymentId\":\"" + UUID.randomUUID() + "\",\"status\":\"INITIATED\"}");
+		return OutboxEvent.pending("PAYMENT", UUID.randomUUID(), PaymentEventType.CREATED.wireName(),
+				messaging.exchange(), routingKey,
+				"{\"eventId\":\"" + UUID.randomUUID() + "\",\"paymentId\":\"" + UUID.randomUUID()
+						+ "\",\"amount\":10.00,\"currency\":\"USD\",\"status\":\"INITIATED\",\"paymentVersion\":0,"
+						+ "\"occurredAt\":\"2026-01-01T00:00:00Z\"}");
 	}
 
 	private void stopBrokerApplication() throws Exception {

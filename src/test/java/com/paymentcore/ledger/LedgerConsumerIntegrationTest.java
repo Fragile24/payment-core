@@ -1,10 +1,12 @@
 package com.paymentcore.ledger;
 
 import com.paymentcore.TestcontainersConfiguration;
+import com.paymentcore.payment.domain.PaymentAction;
 import com.paymentcore.payment.dto.CreatePaymentRequest;
-import com.paymentcore.payment.domain.PaymentStatus;
 import com.paymentcore.payment.event.MessagingProperties;
 import com.paymentcore.payment.event.PaymentCreatedEvent;
+import com.paymentcore.payment.event.PaymentEventHeaders;
+import com.paymentcore.payment.event.PaymentEventType;
 import com.paymentcore.payment.event.PaymentStatusChangedEvent;
 import com.paymentcore.payment.outbox.OutboxEvent;
 import com.paymentcore.payment.outbox.OutboxEventRepository;
@@ -82,7 +84,7 @@ class LedgerConsumerIntegrationTest {
 
 		awaitProjection(paymentId, "INITIATED", 0);
 
-		paymentService.authorize(paymentId);
+		paymentService.transition(paymentId, PaymentAction.AUTHORIZE);
 
 		awaitProjection(paymentId, "AUTHORIZED", 1);
 	}
@@ -104,7 +106,7 @@ class LedgerConsumerIntegrationTest {
 
 		await().atMost(Duration.ofSeconds(10)).untilAsserted(() -> assertThat(meterRegistry
 			.find("payment.projection.events")
-			.tags("outcome", "duplicate", "eventType", "PAYMENT_CREATED")
+			.tags("outcome", "duplicate", "eventType", PaymentEventType.CREATED.wireName())
 			.counter()).isNotNull());
 
 		assertThat(jdbc.queryForObject("SELECT count(*) FROM processed_events WHERE event_id = ?", Integer.class,
@@ -115,17 +117,16 @@ class LedgerConsumerIntegrationTest {
 	@Test
 	void ignoresAnOlderEventThatArrivesAfterANewerOne() {
 		UUID paymentId = UUID.randomUUID();
-		PaymentStatusChangedEvent newer = new PaymentStatusChangedEvent(UUID.randomUUID(), paymentId,
-				PaymentStatus.INITIATED, PaymentStatus.AUTHORIZED, new BigDecimal("10.00"), "USD", 1,
-				Instant.now());
+		PaymentStatusChangedEvent newer = new PaymentStatusChangedEvent(UUID.randomUUID(), paymentId, "INITIATED",
+				"AUTHORIZED", new BigDecimal("10.00"), "USD", 1, Instant.now());
 		publish(messaging.exchange(), messaging.statusChangedRoutingKey(), UUID.randomUUID(),
-				"PAYMENT_STATUS_CHANGED", jsonMapper.writeValueAsString(newer));
+				PaymentEventType.STATUS_CHANGED.wireName(), jsonMapper.writeValueAsString(newer));
 		awaitProjection(paymentId, "AUTHORIZED", 1);
 
 		PaymentCreatedEvent older = new PaymentCreatedEvent(UUID.randomUUID(), paymentId, new BigDecimal("10.00"),
-				"USD", null, PaymentStatus.INITIATED, 0, Instant.now());
-		publish(messaging.exchange(), messaging.createdRoutingKey(), UUID.randomUUID(), "PAYMENT_CREATED",
-				jsonMapper.writeValueAsString(older));
+				"USD", null, "INITIATED", 0, Instant.now());
+		publish(messaging.exchange(), messaging.createdRoutingKey(), UUID.randomUUID(),
+				PaymentEventType.CREATED.wireName(), jsonMapper.writeValueAsString(older));
 
 		// Give the consumer time to (incorrectly) apply the older event.
 		await().during(Duration.ofSeconds(1)).atMost(Duration.ofSeconds(2)).untilAsserted(
@@ -135,8 +136,8 @@ class LedgerConsumerIntegrationTest {
 	@Test
 	void deadLettersPoisonMessagesAfterRetries() {
 		String poisonPayload = "{not-json";
-		publish(messaging.exchange(), messaging.createdRoutingKey(), UUID.randomUUID(), "PAYMENT_CREATED",
-				poisonPayload);
+		publish(messaging.exchange(), messaging.createdRoutingKey(), UUID.randomUUID(),
+				PaymentEventType.CREATED.wireName(), poisonPayload);
 
 		Message deadLettered = rabbitTemplate.receive(messaging.projectionQueue() + ".dlq", 20_000);
 
@@ -148,7 +149,7 @@ class LedgerConsumerIntegrationTest {
 		Message message = MessageBuilder.withBody(payload.getBytes(StandardCharsets.UTF_8))
 			.setContentType(MessageProperties.CONTENT_TYPE_JSON)
 			.setMessageId(deliveryId.toString())
-			.setHeader("eventType", eventType)
+			.setHeader(PaymentEventHeaders.EVENT_TYPE, eventType)
 			.build();
 		rabbitTemplate.send(exchange, routingKey, message);
 	}

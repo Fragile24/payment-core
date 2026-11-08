@@ -10,6 +10,8 @@ package com.paymentcore.payment.domain;
  *     |                         |
  *     +----------fail-----------+--> FAILED
  * </pre>
+ *
+ * @see PaymentAction for which transitions are allowed
  */
 public enum PaymentStatus {
 	INITIATED,

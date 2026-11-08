@@ -15,6 +15,9 @@ public class OutboxPublishException extends AmqpException {
 
 	public enum Reason {
 
+		/** The message could not be handed to the broker at all. */
+		CONNECTION,
+
 		/** The broker rejected the message. */
 		NACK,
 

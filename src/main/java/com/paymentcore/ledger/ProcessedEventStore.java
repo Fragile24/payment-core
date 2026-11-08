@@ -27,14 +27,15 @@ public class ProcessedEventStore {
 	}
 
 	/**
-	 * @return 1 when this delivery is new, 0 when it was already processed
+	 * @return {@code true} when this delivery is new, {@code false} when it was
+	 * already processed
 	 */
-	public int insertIfAbsent(UUID eventId, String consumer) {
+	public boolean claim(UUID eventId, String consumer) {
 		return jdbc.update("""
 				INSERT INTO processed_events (event_id, consumer, processed_at)
 				VALUES (?, ?, now())
 				ON CONFLICT DO NOTHING
-				""", eventId, consumer);
+				""", eventId, consumer) == 1;
 	}
 
 }
